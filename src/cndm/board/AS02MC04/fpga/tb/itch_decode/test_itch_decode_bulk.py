@@ -35,7 +35,8 @@ def _load_stream():
             bodies.append(body)
         return itch._framed(*bodies)
 
-    stream, _ = itch_gen.gen_random_stream(SYMBOLS, n_msgs=cap, seed=1)
+    stream, _ = itch_gen.gen_random_stream(SYMBOLS, n_msgs=cap, seed=1,
+                                           single_level_safe=False)
     return stream
 
 class TB:

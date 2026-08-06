@@ -357,7 +357,8 @@ wire sfp_rx_status[2];
 
 assign sfp_led[0] = !sfp_rx_status[0];
 assign sfp_led[1] = !sfp_rx_status[1];
-assign led = '1;
+assign led = {itch_fifo_ovf, itch_ladder_ovf,
+              |itch_ask_qty, |itch_bid_qty};
 assign led_r = 1'b1;
 // assign led_g = 1'b1;
 
@@ -830,6 +831,32 @@ cndm_inst (
     .mac_rx_clk(sfp_rx_clk),
     .mac_rx_rst(sfp_rx_rst),
     .mac_axis_rx(axis_sfp_rx)
+);
+
+wire [31:0] itch_bid_px, itch_bid_qty, itch_ask_px, itch_ask_qty;
+wire        itch_ladder_ovf, itch_fifo_ovf;
+
+itch_tap #(
+    .SYM_COUNT(4),
+    .LEVELS(16),
+    .ORDER_COUNT(4096),
+    .PRICE_W(32),
+    .QTY_W(32),
+    .ORDER_REF_W(64),
+    .TS_W(PTP_TS_W),
+    .HDR_SKIP_BYTES(14)
+)
+itch_tap_inst (
+    .clk(sfp_rx_clk[0]),
+    .rst(sfp_rx_rst[0]),
+    .axis_mon(axis_sfp_rx[0]),
+    .ladder_overflow(itch_ladder_ovf),
+    .fifo_overflow(itch_fifo_ovf),
+    .dbg_sym('0),
+    .dbg_bid_px(itch_bid_px),
+    .dbg_bid_qty(itch_bid_qty),
+    .dbg_ask_px(itch_ask_px),
+    .dbg_ask_qty(itch_ask_qty)
 );
 
 endmodule

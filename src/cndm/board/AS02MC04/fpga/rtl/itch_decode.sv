@@ -5,7 +5,8 @@
 module itch_decode #
 (
     parameter SYM_COUNT       = 64,
-    parameter LEVELS          = 8,
+
+    parameter LEVELS          = 16,
     parameter ORDER_COUNT     = 4096,
     parameter PRICE_W         = 32,
     parameter QTY_W           = 32,
@@ -25,6 +26,8 @@ module itch_decode #
     output wire logic [$clog2(SYM_COUNT)-1:0]  trig_sym,
     input  wire logic [QTY_W-1:0]              cfg_imbalance_thresh,
 
+    output wire logic                          ladder_overflow,
+
     input  wire logic [$clog2(SYM_COUNT)-1:0]  dbg_sym,
     output wire logic [PRICE_W-1:0]            dbg_bid_px,
     output wire logic [QTY_W-1:0]              dbg_bid_qty,
@@ -35,9 +38,10 @@ module itch_decode #
     localparam DATA_W   = s_axis_rx.DATA_W;
     localparam SYM_AW   = $clog2(SYM_COUNT);
     localparam ORDER_AW = $clog2(ORDER_COUNT);
+    localparam LVL_AW   = $clog2(LEVELS);
 
     if (DATA_W != 8)
-        $fatal(0, "itch_decode: Phase-1 decode bus is 8-bit (instance %m)");
+        $fatal(0, "itch_decode: decode bus is 8-bit (instance %m)");
 
     localparam MSG_BUF_N = 64;
     localparam BIDX_W    = $clog2(MSG_BUF_N);
@@ -67,14 +71,14 @@ module itch_decode #
 
     state_t state_reg = STATE_IDLE, state_next;
 
-    logic [TS_W-1:0] ts_reg,       ts_next;
-    logic            bad_reg,      bad_next;
-    logic [15:0]     skip_reg,     skip_next;
-    logic [1:0]      lencnt_reg,   lencnt_next;
-    logic [15:0]     msg_len_reg,  msg_len_next;
-    logic [15:0]     msg_rem_reg,  msg_rem_next;
-    logic [BIDX_W-1:0] bidx_reg,   bidx_next;
-    logic            frame_done_reg, frame_done_next;
+    logic [TS_W-1:0]   ts_reg,       ts_next;
+    logic              bad_reg,      bad_next;
+    logic [15:0]       skip_reg,     skip_next;
+    logic [1:0]        lencnt_reg,   lencnt_next;
+    logic [15:0]       msg_len_reg,  msg_len_next;
+    logic [15:0]       msg_rem_reg,  msg_rem_next;
+    logic [BIDX_W-1:0] bidx_reg,     bidx_next;
+    logic              frame_done_reg, frame_done_next;
 
     logic [7:0] msg_buf [0:MSG_BUF_N-1];
 
@@ -91,7 +95,7 @@ module itch_decode #
         {msg_buf[19], msg_buf[20], msg_buf[21], msg_buf[22],
          msg_buf[23], msg_buf[24], msg_buf[25], msg_buf[26]};
 
-    wire       w_side_bid = (msg_buf[19] == "B");
+    wire        w_side_bid   = (msg_buf[19] == "B");
     wire [31:0] w_shares_add = {msg_buf[20], msg_buf[21], msg_buf[22], msg_buf[23]};
     wire [63:0] w_stock      = {msg_buf[24], msg_buf[25], msg_buf[26], msg_buf[27],
                                 msg_buf[28], msg_buf[29], msg_buf[30], msg_buf[31]};
@@ -123,11 +127,6 @@ module itch_decode #
     logic [PRICE_W-1:0]      ord_px    [0:ORDER_COUNT-1];
     logic [QTY_W-1:0]        ord_qty   [0:ORDER_COUNT-1];
 
-    logic [PRICE_W-1:0]      bid_px    [0:SYM_COUNT-1] = '{default: '0};
-    logic [QTY_W-1:0]        bid_qty   [0:SYM_COUNT-1] = '{default: '0};
-    logic [PRICE_W-1:0]      ask_px    [0:SYM_COUNT-1] = '{default: '0};
-    logic [QTY_W-1:0]        ask_qty   [0:SYM_COUNT-1] = '{default: '0};
-
     wire [ORDER_AW-1:0] ref_h     = w_ref[ORDER_AW-1:0];
     wire [ORDER_AW-1:0] new_ref_h = w_new_ref[ORDER_AW-1:0];
 
@@ -138,10 +137,39 @@ module itch_decode #
     wire [QTY_W-1:0]     l_qty  = ord_qty[ref_h];
     wire [QTY_W-1:0]     l_take = (l_qty < w_shares_exec) ? l_qty : w_shares_exec;
 
-    wire [SYM_AW-1:0]  rpl_sym = l_sym;
-    wire               rpl_bid = l_side;
-    wire [PRICE_W-1:0] rpl_opx = l_px;
-    wire [QTY_W-1:0]   rpl_oqty = l_qty;
+    localparam LAD_N = SYM_COUNT * 2 * LEVELS;
+
+    function automatic int lad_base(input [SYM_AW-1:0] sym, input side);
+        lad_base = (int'(sym) * 2 + int'(side)) * LEVELS;
+    endfunction
+
+    logic               lad_v  [0:LAD_N-1] = '{default: 1'b0};
+    logic [PRICE_W-1:0] lad_px [0:LAD_N-1];
+    logic [QTY_W-1:0]   lad_q  [0:LAD_N-1];
+
+    logic [PRICE_W-1:0] scan_bid_px, scan_ask_px;
+    logic [QTY_W-1:0]   scan_bid_q,  scan_ask_q;
+    always_comb begin
+        int bb, ab; int i;
+        bb = (int'(dbg_sym) * 2 + 0) * LEVELS;
+        ab = (int'(dbg_sym) * 2 + 1) * LEVELS;
+        scan_bid_px = '0; scan_bid_q = '0;
+        scan_ask_px = '0; scan_ask_q = '0;
+        for (i = 0; i < LEVELS; i++) begin
+            if (lad_v[bb + i]) begin
+                if (scan_bid_q == 0 || lad_px[bb + i] > scan_bid_px) begin
+                    scan_bid_px = lad_px[bb + i];
+                    scan_bid_q  = lad_q [bb + i];
+                end
+            end
+            if (lad_v[ab + i]) begin
+                if (scan_ask_q == 0 || lad_px[ab + i] < scan_ask_px) begin
+                    scan_ask_px = lad_px[ab + i];
+                    scan_ask_q  = lad_q [ab + i];
+                end
+            end
+        end
+    end
 
     assign s_axis_rx.tready = (state_reg != STATE_DECODE);
 
@@ -157,10 +185,13 @@ module itch_decode #
     assign trig_valid = 1'b0;
     assign trig_sym   = '0;
 
-    assign dbg_bid_px  = bid_px[dbg_sym];
-    assign dbg_bid_qty = bid_qty[dbg_sym];
-    assign dbg_ask_px  = ask_px[dbg_sym];
-    assign dbg_ask_qty = ask_qty[dbg_sym];
+    assign dbg_bid_px  = scan_bid_px;
+    assign dbg_bid_qty = scan_bid_q;
+    assign dbg_ask_px  = scan_ask_px;
+    assign dbg_ask_qty = scan_ask_q;
+
+    logic overflow_reg;
+    assign ladder_overflow = overflow_reg;
 
     always_comb begin
         state_next       = state_reg;
@@ -195,7 +226,6 @@ module itch_decode #
                         skip_next  = 16'(HDR_SKIP_BYTES - 1);
                     end
                 end
-
                 STATE_SKIP_HDR: begin
                     if (skip_reg <= 1) begin
                         state_next  = STATE_MSG_LEN;
@@ -204,9 +234,7 @@ module itch_decode #
                         skip_next = skip_reg - 1;
                     end
                 end
-
                 STATE_MSG_LEN: begin
-
                     msg_len_next = {msg_len_reg[7:0], rx_b};
                     if (lencnt_reg == 2'd1) begin
                         msg_rem_next = {msg_len_reg[7:0], rx_b};
@@ -216,16 +244,13 @@ module itch_decode #
                         lencnt_next = lencnt_reg - 1;
                     end
                 end
-
                 STATE_MSG_BODY: begin
-
                     bidx_next = bidx_reg + 1;
                     if (msg_rem_reg == 16'd1)
                         state_next = STATE_DECODE;
                     else
                         msg_rem_next = msg_rem_reg - 1;
                 end
-
                 default: state_next = STATE_IDLE;
             endcase
 
@@ -237,8 +262,24 @@ module itch_decode #
             frame_done_next = 1'b0;
     end
 
-    logic [PRICE_W-1:0] lvl_px_v;
-    logic [QTY_W-1:0]   lvl_qty_v;
+    function automatic int lad_find(input int base, input [PRICE_W-1:0] price);
+        int i; lad_find = LEVELS;
+        for (i = 0; i < LEVELS; i++)
+            if (lad_v[base + i] && lad_px[base + i] == price) lad_find = i;
+    endfunction
+
+    function automatic int lad_free(input int base);
+        int i; lad_free = LEVELS;
+        for (i = LEVELS - 1; i >= 0; i--)
+            if (!lad_v[base + i]) lad_free = i;
+    endfunction
+
+    int dec_base;
+    int dec_slot;
+    int rpl_oslot;
+    int rpl_nslot;
+    logic rpl_ofree;
+    logic [QTY_W-1:0] rpl_q;
 
     always_ff @(posedge clk) begin
         state_reg      <= state_next;
@@ -251,6 +292,8 @@ module itch_decode #
         bidx_reg       <= bidx_next;
         frame_done_reg <= frame_done_next;
 
+        overflow_reg <= 1'b0;
+
         if (beat && state_reg == STATE_MSG_BODY)
             msg_buf[bidx_reg] <= rx_b;
 
@@ -258,7 +301,6 @@ module itch_decode #
             case (w_type)
                 T_ADD, T_ADD_MPID: begin
                     if (w_sym_tracked) begin
-
                         ord_valid[ref_h] <= 1'b1;
                         ord_tag  [ref_h] <= w_ref;
                         ord_sym  [ref_h] <= w_sym;
@@ -266,47 +308,50 @@ module itch_decode #
                         ord_px   [ref_h] <= w_price_add;
                         ord_qty  [ref_h] <= w_shares_add;
 
-                        if (w_side_bid) begin
-                            if (bid_qty[w_sym] == 0 || w_price_add > bid_px[w_sym]) begin
-                                bid_px [w_sym] <= w_price_add;
-                                bid_qty[w_sym] <= w_shares_add;
-                            end else if (w_price_add == bid_px[w_sym]) begin
-                                bid_qty[w_sym] <= bid_qty[w_sym] + w_shares_add;
-                            end
+                        dec_base = (int'(w_sym) * 2 + (w_side_bid ? 0 : 1)) * LEVELS;
+                        dec_slot = lad_find(dec_base, w_price_add);
+                        if (dec_slot != LEVELS) begin
+                            lad_q[dec_base + dec_slot] <= lad_q[dec_base + dec_slot] + w_shares_add;
                         end else begin
-                            if (ask_qty[w_sym] == 0 || w_price_add < ask_px[w_sym]) begin
-                                ask_px [w_sym] <= w_price_add;
-                                ask_qty[w_sym] <= w_shares_add;
-                            end else if (w_price_add == ask_px[w_sym]) begin
-                                ask_qty[w_sym] <= ask_qty[w_sym] + w_shares_add;
+                            dec_slot = lad_free(dec_base);
+                            if (dec_slot != LEVELS) begin
+                                lad_v [dec_base + dec_slot] <= 1'b1;
+                                lad_px[dec_base + dec_slot] <= w_price_add;
+                                lad_q [dec_base + dec_slot] <= w_shares_add;
+                            end else begin
+                                overflow_reg <= 1'b1;
                             end
                         end
                     end
                 end
+
                 T_EXEC, T_EXEC_PX, T_CANCEL: begin
                     if (l_hit) begin
                         ord_qty[ref_h] <= l_qty - l_take;
                         if (l_qty - l_take == 0)
                             ord_valid[ref_h] <= 1'b0;
 
-                        if (l_side) begin
-                            if (l_px == bid_px[l_sym])
-                                bid_qty[l_sym] <= bid_qty[l_sym] - l_take;
-                        end else begin
-                            if (l_px == ask_px[l_sym])
-                                ask_qty[l_sym] <= ask_qty[l_sym] - l_take;
+                        dec_base = (int'(l_sym) * 2 + (l_side ? 0 : 1)) * LEVELS;
+                        dec_slot = lad_find(dec_base, l_px);
+                        if (dec_slot != LEVELS) begin
+                            if (lad_q[dec_base + dec_slot] <= l_take)
+                                lad_v[dec_base + dec_slot] <= 1'b0;
+                            else
+                                lad_q[dec_base + dec_slot] <= lad_q[dec_base + dec_slot] - l_take;
                         end
                     end
                 end
+
                 T_DELETE: begin
                     if (l_hit) begin
                         ord_valid[ref_h] <= 1'b0;
-                        if (l_side) begin
-                            if (l_px == bid_px[l_sym])
-                                bid_qty[l_sym] <= bid_qty[l_sym] - l_qty;
-                        end else begin
-                            if (l_px == ask_px[l_sym])
-                                ask_qty[l_sym] <= ask_qty[l_sym] - l_qty;
+                        dec_base = (int'(l_sym) * 2 + (l_side ? 0 : 1)) * LEVELS;
+                        dec_slot = lad_find(dec_base, l_px);
+                        if (dec_slot != LEVELS) begin
+                            if (lad_q[dec_base + dec_slot] <= l_qty)
+                                lad_v[dec_base + dec_slot] <= 1'b0;
+                            else
+                                lad_q[dec_base + dec_slot] <= lad_q[dec_base + dec_slot] - l_qty;
                         end
                     end
                 end
@@ -317,37 +362,52 @@ module itch_decode #
                         ord_valid[ref_h]     <= 1'b0;
                         ord_valid[new_ref_h] <= 1'b1;
                         ord_tag  [new_ref_h] <= w_new_ref;
-                        ord_sym  [new_ref_h] <= rpl_sym;
-                        ord_side [new_ref_h] <= rpl_bid;
+                        ord_sym  [new_ref_h] <= l_sym;
+                        ord_side [new_ref_h] <= l_side;
                         ord_px   [new_ref_h] <= w_price_repl;
                         ord_qty  [new_ref_h] <= w_shares_repl;
 
-                        if (rpl_bid) begin
-                            lvl_px_v  = bid_px[rpl_sym];
-                            lvl_qty_v = bid_qty[rpl_sym];
-                            if (rpl_opx == lvl_px_v)
-                                lvl_qty_v = lvl_qty_v - rpl_oqty;
-                            if (lvl_qty_v == 0 || w_price_repl > lvl_px_v) begin
-                                lvl_px_v  = w_price_repl;
-                                lvl_qty_v = w_shares_repl;
-                            end else if (w_price_repl == lvl_px_v) begin
-                                lvl_qty_v = lvl_qty_v + w_shares_repl;
+                        dec_base  = (int'(l_sym) * 2 + (l_side ? 0 : 1)) * LEVELS;
+                        rpl_oslot = lad_find(dec_base, l_px);
+                        rpl_nslot = lad_find(dec_base, w_price_repl);
+
+                        if (l_px == w_price_repl) begin
+
+                            if (rpl_oslot != LEVELS) begin
+                                rpl_q = lad_q[dec_base + rpl_oslot] - l_qty + w_shares_repl;
+                                if (rpl_q == 0)
+                                    lad_v[dec_base + rpl_oslot] <= 1'b0;
+                                else
+                                    lad_q[dec_base + rpl_oslot] <= rpl_q;
                             end
-                            bid_px [rpl_sym] <= lvl_px_v;
-                            bid_qty[rpl_sym] <= lvl_qty_v;
                         end else begin
-                            lvl_px_v  = ask_px[rpl_sym];
-                            lvl_qty_v = ask_qty[rpl_sym];
-                            if (rpl_opx == lvl_px_v)
-                                lvl_qty_v = lvl_qty_v - rpl_oqty;
-                            if (lvl_qty_v == 0 || w_price_repl < lvl_px_v) begin
-                                lvl_px_v  = w_price_repl;
-                                lvl_qty_v = w_shares_repl;
-                            end else if (w_price_repl == lvl_px_v) begin
-                                lvl_qty_v = lvl_qty_v + w_shares_repl;
+
+                            rpl_ofree = 1'b0;
+                            if (rpl_oslot != LEVELS) begin
+                                if (lad_q[dec_base + rpl_oslot] <= l_qty) begin
+                                    lad_v[dec_base + rpl_oslot] <= 1'b0;
+                                    rpl_ofree = 1'b1;
+                                end else begin
+                                    lad_q[dec_base + rpl_oslot] <= lad_q[dec_base + rpl_oslot] - l_qty;
+                                end
                             end
-                            ask_px [rpl_sym] <= lvl_px_v;
-                            ask_qty[rpl_sym] <= lvl_qty_v;
+
+                            if (rpl_nslot != LEVELS) begin
+                                lad_q[dec_base + rpl_nslot] <= lad_q[dec_base + rpl_nslot] + w_shares_repl;
+                            end else if (rpl_ofree) begin
+                                lad_v [dec_base + rpl_oslot] <= 1'b1;
+                                lad_px[dec_base + rpl_oslot] <= w_price_repl;
+                                lad_q [dec_base + rpl_oslot] <= w_shares_repl;
+                            end else begin
+                                rpl_nslot = lad_free(dec_base);
+                                if (rpl_nslot != LEVELS) begin
+                                    lad_v [dec_base + rpl_nslot] <= 1'b1;
+                                    lad_px[dec_base + rpl_nslot] <= w_price_repl;
+                                    lad_q [dec_base + rpl_nslot] <= w_shares_repl;
+                                end else begin
+                                    overflow_reg <= 1'b1;
+                                end
+                            end
                         end
                     end
                 end
@@ -362,10 +422,8 @@ module itch_decode #
             msg_rem_reg    <= '0;
             bidx_reg       <= '0;
             frame_done_reg <= 1'b0;
-            for (int s = 0; s < SYM_COUNT; s++) begin
-                bid_px[s]  <= '0; bid_qty[s] <= '0;
-                ask_px[s]  <= '0; ask_qty[s] <= '0;
-            end
+            for (int i = 0; i < LAD_N; i++)
+                lad_v[i] <= 1'b0;
             for (int o = 0; o < ORDER_COUNT; o++)
                 ord_valid[o] <= 1'b0;
         end

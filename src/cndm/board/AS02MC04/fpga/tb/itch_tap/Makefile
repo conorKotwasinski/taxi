@@ -19,8 +19,8 @@ VERILOG_SOURCES += $(COCOTB_TOPLEVEL).sv
 VERILOG_SOURCES += $(RTL_DIR)/itch_tap.sv
 VERILOG_SOURCES += $(RTL_DIR)/itch_decode.sv
 VERILOG_SOURCES += $(TAXI_SRC_DIR)/axis/rtl/taxi_axis_if.sv
-VERILOG_SOURCES += $(TAXI_SRC_DIR)/axis/rtl/taxi_axis_broadcast.sv
 VERILOG_SOURCES += $(TAXI_SRC_DIR)/axis/rtl/taxi_axis_adapter.sv
+VERILOG_SOURCES += $(TAXI_SRC_DIR)/axis/rtl/taxi_axis_async_fifo.f
 
 process_f_file = $(call process_f_files,$(addprefix $(dir $1),$(shell cat $1)))
 process_f_files = $(foreach f,$1,$(if $(filter %.f,$f),$(call process_f_file,$f),$f))

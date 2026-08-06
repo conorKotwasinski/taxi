@@ -5,21 +5,23 @@
 module itch_tap #
 (
     parameter SYM_COUNT      = 64,
-    parameter LEVELS         = 8,
+    parameter LEVELS         = 16,
     parameter ORDER_COUNT    = 4096,
     parameter PRICE_W        = 32,
     parameter QTY_W          = 32,
     parameter ORDER_REF_W    = 64,
     parameter TS_W           = 48,
-    parameter HDR_SKIP_BYTES = 14
+    parameter HDR_SKIP_BYTES = 14,
+    parameter FIFO_DEPTH     = 8192
 )
 (
     input  wire logic  clk,
     input  wire logic  rst,
 
-    taxi_axis_if.snk   s_axis_rx,
+    taxi_axis_if.mon   axis_mon,
 
-    taxi_axis_if.src   m_axis_pass,
+    output wire logic                          ladder_overflow,
+    output wire logic                          fifo_overflow,
 
     input  wire logic [$clog2(SYM_COUNT)-1:0]  dbg_sym,
     output wire logic [PRICE_W-1:0]            dbg_bid_px,
@@ -30,29 +32,47 @@ module itch_tap #
 
     localparam USER_W = 1 + TS_W;
 
-    taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(USER_W)) axis_bc[2]();
+    taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(USER_W)) axis_snoop();
 
-    taxi_axis_broadcast #(.M_COUNT(2)) bc (
-        .clk(clk), .rst(rst),
-        .s_axis(s_axis_rx),
-        .m_axis(axis_bc)
+    assign axis_snoop.tdata  = axis_mon.tdata;
+    assign axis_snoop.tkeep  = axis_mon.tkeep;
+    assign axis_snoop.tstrb  = axis_mon.tstrb;
+    assign axis_snoop.tlast  = axis_mon.tlast;
+    assign axis_snoop.tid    = '0;
+    assign axis_snoop.tdest  = '0;
+    assign axis_snoop.tuser  = axis_mon.tuser;
+
+    assign axis_snoop.tvalid = axis_mon.tvalid && axis_mon.tready;
+
+    taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(USER_W)) axis_fifo();
+
+    wire fifo_ovf;
+    assign fifo_overflow = fifo_ovf;
+
+    taxi_axis_async_fifo #(
+        .DEPTH(FIFO_DEPTH),
+        .FRAME_FIFO(1'b1),
+        .DROP_OVERSIZE_FRAME(1'b1),
+        .DROP_BAD_FRAME(1'b1),
+        .DROP_WHEN_FULL(1'b1),
+        .USER_BAD_FRAME_VALUE(1'b1),
+        .USER_BAD_FRAME_MASK(1'b1)
+    ) fifo (
+        .s_clk(clk), .s_rst(rst), .s_axis(axis_snoop),
+        .m_clk(clk), .m_rst(rst), .m_axis(axis_fifo),
+        .s_pause_req(1'b0), .m_pause_req(1'b0),
+        .s_pause_ack(), .m_pause_ack(),
+        .s_status_depth(), .s_status_depth_commit(),
+        .s_status_overflow(fifo_ovf), .s_status_bad_frame(), .s_status_good_frame(),
+        .m_status_depth(), .m_status_depth_commit(),
+        .m_status_overflow(), .m_status_bad_frame(), .m_status_good_frame()
     );
-
-    assign m_axis_pass.tdata  = axis_bc[0].tdata;
-    assign m_axis_pass.tkeep  = axis_bc[0].tkeep;
-    assign m_axis_pass.tstrb  = axis_bc[0].tstrb;
-    assign m_axis_pass.tlast  = axis_bc[0].tlast;
-    assign m_axis_pass.tid    = axis_bc[0].tid;
-    assign m_axis_pass.tdest  = axis_bc[0].tdest;
-    assign m_axis_pass.tuser  = axis_bc[0].tuser;
-    assign m_axis_pass.tvalid = axis_bc[0].tvalid;
-    assign axis_bc[0].tready  = m_axis_pass.tready;
 
     taxi_axis_if #(.DATA_W(8), .USER_EN(1), .USER_W(USER_W)) axis_dec();
 
     taxi_axis_adapter dn (
         .clk(clk), .rst(rst),
-        .s_axis(axis_bc[1]),
+        .s_axis(axis_fifo),
         .m_axis(axis_dec)
     );
 
@@ -78,6 +98,7 @@ module itch_tap #
         .trig_valid(trig_valid),
         .trig_sym(trig_sym),
         .cfg_imbalance_thresh('0),
+        .ladder_overflow(ladder_overflow),
         .dbg_sym(dbg_sym),
         .dbg_bid_px(dbg_bid_px),
         .dbg_bid_qty(dbg_bid_qty),

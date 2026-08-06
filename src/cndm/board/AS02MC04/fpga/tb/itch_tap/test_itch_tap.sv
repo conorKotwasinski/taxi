@@ -6,7 +6,7 @@ module test_itch_tap #
 (
 
     parameter SYM_COUNT      = 4,
-    parameter LEVELS         = 8,
+    parameter LEVELS         = 16,
     parameter ORDER_COUNT    = 4096,
     parameter PRICE_W        = 32,
     parameter QTY_W          = 32,
@@ -23,8 +23,11 @@ localparam USER_W = 1 + TS_W;
 logic clk;
 logic rst;
 
-taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(USER_W)) s_axis_rx();
-taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(USER_W)) m_axis_pass();
+taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(USER_W)) axis_rx();
+assign axis_rx.tready = 1'b1;
+
+logic               ladder_overflow;
+logic               fifo_overflow;
 
 logic [SYM_AW-1:0]  dbg_sym;
 logic [PRICE_W-1:0] dbg_bid_px;
@@ -45,8 +48,9 @@ itch_tap #(
 uut (
     .clk(clk),
     .rst(rst),
-    .s_axis_rx(s_axis_rx),
-    .m_axis_pass(m_axis_pass),
+    .axis_mon(axis_rx),
+    .ladder_overflow(ladder_overflow),
+    .fifo_overflow(fifo_overflow),
     .dbg_sym(dbg_sym),
     .dbg_bid_px(dbg_bid_px),
     .dbg_bid_qty(dbg_bid_qty),

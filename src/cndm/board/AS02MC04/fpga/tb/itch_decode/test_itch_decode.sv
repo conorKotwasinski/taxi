@@ -1,15 +1,10 @@
-// SPDX-License-Identifier: MIT
-/*
- * testbench for itch_decode
- */
-
 `resetall
 `timescale 1ns / 1ps
 `default_nettype none
 
 module test_itch_decode #
 (
-    /* verilator lint_off WIDTHTRUNC */
+
     parameter DATA_W         = 8,
     parameter SYM_COUNT      = 64,
     parameter LEVELS         = 8,
@@ -19,7 +14,7 @@ module test_itch_decode #
     parameter ORDER_REF_W    = 64,
     parameter TS_W           = 48,
     parameter HDR_SKIP_BYTES = 14
-    /* verilator lint_on WIDTHTRUNC */
+
 )
 ();
 
@@ -28,9 +23,8 @@ localparam SYM_AW = $clog2(SYM_COUNT);
 logic clk;
 logic rst;
 
-// Frame input carries: tuser[0] = bad, tuser[1 +: TS_W] = ingress timestamp
 taxi_axis_if #(.DATA_W(DATA_W), .USER_EN(1), .USER_W(1+TS_W)) s_axis_rx();
-// Delta output (unused in Phase 1)
+
 taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(1)) m_axis_delta();
 
 logic [QTY_W-1:0]  cfg_imbalance_thresh;
@@ -65,6 +59,8 @@ uut (
     .trig_sym(trig_sym),
     .cfg_imbalance_thresh(cfg_imbalance_thresh),
 
+    .ladder_overflow(),
+
     .dbg_sym(dbg_sym),
     .dbg_bid_px(dbg_bid_px),
     .dbg_bid_qty(dbg_bid_qty),
@@ -72,7 +68,6 @@ uut (
     .dbg_ask_qty(dbg_ask_qty)
 );
 
-// let the delta sink always accept
 assign m_axis_delta.tready = 1'b1;
 
 endmodule

@@ -140,6 +140,22 @@ async def run_test_delete_no_empty(dut):
 async def run_test_replace(dut):
     await _run_stream_and_check(dut, _stream_replace(), ('MSFT',))
 
+def _stream_delete_empties_best():
+
+    mk = itch._mk
+    framed = itch._framed
+    return framed(
+        mk('A', ref=1, side='B', shares=100, stock='AAPL', price=1500000),
+        mk('A', ref=2, side='B', shares=200, stock='AAPL', price=1499900),
+        mk('A', ref=3, side='S', shares=150, stock='AAPL', price=1500100),
+        mk('D', ref=1),
+    )
+
+@cocotb.test()
+async def run_test_delete_empties_best(dut):
+
+    await _run_stream_and_check(dut, _stream_delete_empties_best(), ('AAPL',))
+
 tests_dir = os.path.abspath(os.path.dirname(__file__))
 rtl_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'rtl'))
 lib_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'lib'))
