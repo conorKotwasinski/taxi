@@ -23,6 +23,11 @@ module itch_tap #
     output wire logic                          ladder_overflow,
     output wire logic                          fifo_overflow,
 
+    input  wire logic [QTY_W-1:0]              cfg_imbalance_thresh,
+    output wire logic                          trig_valid,
+    output wire logic [$clog2(SYM_COUNT)-1:0]  trig_sym,
+    output wire logic                          trig_side,
+
     input  wire logic [$clog2(SYM_COUNT)-1:0]  dbg_sym,
     output wire logic [PRICE_W-1:0]            dbg_bid_px,
     output wire logic [QTY_W-1:0]              dbg_bid_qty,
@@ -79,9 +84,6 @@ module itch_tap #
     taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(1)) axis_delta();
     assign axis_delta.tready = 1'b1;
 
-    logic                          trig_valid;
-    logic [$clog2(SYM_COUNT)-1:0]  trig_sym;
-
     itch_decode #(
         .SYM_COUNT(SYM_COUNT),
         .LEVELS(LEVELS),
@@ -97,7 +99,8 @@ module itch_tap #
         .m_axis_delta(axis_delta),
         .trig_valid(trig_valid),
         .trig_sym(trig_sym),
-        .cfg_imbalance_thresh('0),
+        .trig_side(trig_side),
+        .cfg_imbalance_thresh(cfg_imbalance_thresh),
         .ladder_overflow(ladder_overflow),
         .dbg_sym(dbg_sym),
         .dbg_bid_px(dbg_bid_px),

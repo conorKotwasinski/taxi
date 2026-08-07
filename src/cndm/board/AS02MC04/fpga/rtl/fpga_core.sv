@@ -357,7 +357,7 @@ wire sfp_rx_status[2];
 
 assign sfp_led[0] = !sfp_rx_status[0];
 assign sfp_led[1] = !sfp_rx_status[1];
-assign led = {itch_fifo_ovf, itch_ladder_ovf,
+assign led = {itch_ladder_ovf | itch_fifo_ovf, itch_trig_led,
               |itch_ask_qty, |itch_bid_qty};
 assign led_r = 1'b1;
 // assign led_g = 1'b1;
@@ -835,6 +835,10 @@ cndm_inst (
 
 wire [31:0] itch_bid_px, itch_bid_qty, itch_ask_px, itch_ask_qty;
 wire        itch_ladder_ovf, itch_fifo_ovf;
+wire        itch_trig_valid, itch_trig_side;
+wire [1:0]  itch_trig_sym;
+
+localparam [31:0] ITCH_IMBALANCE_THRESH = 32'd10000;
 
 itch_tap #(
     .SYM_COUNT(4),
@@ -852,12 +856,30 @@ itch_tap_inst (
     .axis_mon(axis_sfp_rx[0]),
     .ladder_overflow(itch_ladder_ovf),
     .fifo_overflow(itch_fifo_ovf),
+    .cfg_imbalance_thresh(ITCH_IMBALANCE_THRESH),
+    .trig_valid(itch_trig_valid),
+    .trig_sym(itch_trig_sym),
+    .trig_side(itch_trig_side),
     .dbg_sym('0),
     .dbg_bid_px(itch_bid_px),
     .dbg_bid_qty(itch_bid_qty),
     .dbg_ask_px(itch_ask_px),
     .dbg_ask_qty(itch_ask_qty)
 );
+
+localparam TRIG_STRETCH = 12500000;
+logic [$clog2(TRIG_STRETCH)-1:0] trig_str_cnt = '0;
+logic itch_trig_led = 1'b0;
+always_ff @(posedge sfp_rx_clk[0]) begin
+    if (itch_trig_valid) begin
+        trig_str_cnt  <= TRIG_STRETCH;
+        itch_trig_led <= 1'b1;
+    end else if (trig_str_cnt != 0) begin
+        trig_str_cnt <= trig_str_cnt - 1;
+    end else begin
+        itch_trig_led <= 1'b0;
+    end
+end
 
 endmodule
 

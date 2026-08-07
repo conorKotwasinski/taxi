@@ -31,6 +31,7 @@ logic [QTY_W-1:0]  cfg_imbalance_thresh;
 
 logic              trig_valid;
 logic [SYM_AW-1:0] trig_sym;
+logic              trig_side;
 
 logic [SYM_AW-1:0] dbg_sym;
 logic [PRICE_W-1:0] dbg_bid_px;
@@ -57,6 +58,7 @@ uut (
 
     .trig_valid(trig_valid),
     .trig_sym(trig_sym),
+    .trig_side(trig_side),
     .cfg_imbalance_thresh(cfg_imbalance_thresh),
 
     .ladder_overflow(),

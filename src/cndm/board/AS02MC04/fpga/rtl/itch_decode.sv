@@ -24,6 +24,7 @@ module itch_decode #
 
     output wire logic                          trig_valid,
     output wire logic [$clog2(SYM_COUNT)-1:0]  trig_sym,
+    output wire logic                          trig_side,
     input  wire logic [QTY_W-1:0]              cfg_imbalance_thresh,
 
     output wire logic                          ladder_overflow,
@@ -182,8 +183,35 @@ module itch_decode #
     assign m_axis_delta.tuser  = '0;
     assign m_axis_delta.tvalid = 1'b0;
 
-    assign trig_valid = 1'b0;
-    assign trig_sym   = '0;
+    logic [SYM_AW-1:0] upd_sym_reg;
+    logic              upd_pending_reg;
+
+    logic [QTY_W-1:0]   tsym_bid_q, tsym_ask_q;
+    logic [PRICE_W-1:0] tsym_bid_px, tsym_ask_px;
+    always_comb begin
+        int tb, ta; int i;
+        tb = (int'(upd_sym_reg) * 2 + 0) * LEVELS;
+        ta = (int'(upd_sym_reg) * 2 + 1) * LEVELS;
+        tsym_bid_q = '0; tsym_bid_px = '0;
+        tsym_ask_q = '0; tsym_ask_px = '0;
+        for (i = 0; i < LEVELS; i++) begin
+            if (lad_v[tb + i] && (tsym_bid_q == 0 || lad_px[tb + i] > tsym_bid_px)) begin
+                tsym_bid_px = lad_px[tb + i];
+                tsym_bid_q  = lad_q [tb + i];
+            end
+            if (lad_v[ta + i] && (tsym_ask_q == 0 || lad_px[ta + i] < tsym_ask_px)) begin
+                tsym_ask_px = lad_px[ta + i];
+                tsym_ask_q  = lad_q [ta + i];
+            end
+        end
+    end
+
+    logic              trig_valid_reg;
+    logic [SYM_AW-1:0] trig_sym_reg;
+    logic              trig_side_reg;
+    assign trig_valid = trig_valid_reg;
+    assign trig_sym   = trig_sym_reg;
+    assign trig_side  = trig_side_reg;
 
     assign dbg_bid_px  = scan_bid_px;
     assign dbg_bid_qty = scan_bid_q;
@@ -294,10 +322,35 @@ module itch_decode #
 
         overflow_reg <= 1'b0;
 
+        trig_valid_reg  <= 1'b0;
+
+        if (upd_pending_reg) begin
+            trig_sym_reg <= upd_sym_reg;
+            if (tsym_bid_q > tsym_ask_q) begin
+                trig_side_reg  <= 1'b0;
+                trig_valid_reg <= (tsym_bid_q - tsym_ask_q) > cfg_imbalance_thresh;
+            end else begin
+                trig_side_reg  <= 1'b1;
+                trig_valid_reg <= (tsym_ask_q - tsym_bid_q) > cfg_imbalance_thresh;
+            end
+        end
+        upd_pending_reg <= 1'b0;
+
         if (beat && state_reg == STATE_MSG_BODY)
             msg_buf[bidx_reg] <= rx_b;
 
         if (state_reg == STATE_DECODE) begin
+
+            case (w_type)
+                T_ADD, T_ADD_MPID: begin
+                    if (w_sym_tracked) begin upd_sym_reg <= w_sym; upd_pending_reg <= 1'b1; end
+                end
+                T_EXEC, T_EXEC_PX, T_CANCEL, T_DELETE, T_REPLACE: begin
+                    if (l_hit) begin upd_sym_reg <= l_sym; upd_pending_reg <= 1'b1; end
+                end
+                default: ;
+            endcase
+
             case (w_type)
                 T_ADD, T_ADD_MPID: begin
                     if (w_sym_tracked) begin
@@ -422,6 +475,8 @@ module itch_decode #
             msg_rem_reg    <= '0;
             bidx_reg       <= '0;
             frame_done_reg <= 1'b0;
+            trig_valid_reg <= 1'b0;
+            upd_pending_reg <= 1'b0;
             for (int i = 0; i < LAD_N; i++)
                 lad_v[i] <= 1'b0;
             for (int o = 0; o < ORDER_COUNT; o++)

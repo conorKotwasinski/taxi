@@ -33,6 +33,16 @@ class TB:
 
         dut.cfg_imbalance_thresh.setimmediatevalue(0)
         dut.dbg_sym.setimmediatevalue(0)
+        self.trig_events = []
+        cocotb.start_soon(self._trig_monitor())
+
+    async def _trig_monitor(self):
+
+        while True:
+            await RisingEdge(self.dut.clk)
+            if int(self.dut.trig_valid.value):
+                self.trig_events.append(
+                    (int(self.dut.trig_sym.value), int(self.dut.trig_side.value)))
 
     async def reset(self):
         self.dut.rst.setimmediatevalue(0)
@@ -155,6 +165,31 @@ def _stream_delete_empties_best():
 async def run_test_delete_empties_best(dut):
 
     await _run_stream_and_check(dut, _stream_delete_empties_best(), ('AAPL',))
+
+@cocotb.test()
+async def run_test_trigger(dut):
+
+    tb = TB(dut)
+    await tb.reset()
+    dut.cfg_imbalance_thresh.value = 300
+
+    mk = itch._mk
+    framed = itch._framed
+    stream = framed(
+        mk('A', ref=1, side='B', shares=1000, stock='AAPL', price=1500000),
+        mk('A', ref=2, side='S', shares=100,  stock='AAPL', price=1500100),
+        mk('A', ref=3, side='B', shares=200,  stock='MSFT', price=4200000),
+        mk('A', ref=4, side='S', shares=250,  stock='MSFT', price=4200100),
+    )
+    await tb.send_stream(stream, ts=1)
+
+    aapl = SYM_ID['AAPL']
+    msft = SYM_ID['MSFT']
+    fired_aapl_bid = any(s == aapl and side == 0 for s, side in tb.trig_events)
+    fired_msft = any(s == msft for s, side in tb.trig_events)
+    tb.log.info("trigger events: %r", tb.trig_events)
+    assert fired_aapl_bid, "expected AAPL bid-heavy trigger"
+    assert not fired_msft, "MSFT is balanced; should not trigger"
 
 tests_dir = os.path.abspath(os.path.dirname(__file__))
 rtl_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'rtl'))
