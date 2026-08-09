@@ -37,11 +37,15 @@ module pyrite_pcie_us_vpd_qspi #
     parameter logic [3:0] FLASH_SEG_FALLBACK = 0,
     parameter logic [31:0] FLASH_SEG0_SIZE = 32'h00000000,
     parameter FLASH_DATA_W = 4,
-    parameter logic FLASH_DUAL_QSPI = 1'b1
+    parameter logic FLASH_DUAL_QSPI = 1'b1,
+
+    parameter USER_REG_CNT = 0
 )
 (
     input  wire logic                     clk,
     input  wire logic                     rst,
+
+    input  wire logic [31:0]              user_regs [USER_REG_CNT == 0 ? 1 : USER_REG_CNT] = '{default: '0},
 
     /*
      * PCIe
@@ -264,7 +268,12 @@ always_ff @(posedge clk) begin
                     vpd_apb_prdata_reg[17] <= qspi_1_cs;
                 end
             end
-            default: begin end
+            default: begin
+                for (int ur = 0; ur < USER_REG_CNT; ur++) begin
+                    if (8'({vpd_apb_int[1].paddr >> 2, 2'b00}) == 8'(8'h60 + ur*4))
+                        vpd_apb_prdata_reg <= user_regs[ur];
+                end
+            end
         endcase
     end
 

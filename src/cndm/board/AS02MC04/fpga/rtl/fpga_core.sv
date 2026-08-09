@@ -177,6 +177,8 @@ module fpga_core #
 localparam logic PTP_TS_FMT_TOD = 1'b0;
 localparam PTP_TS_W = PTP_TS_FMT_TOD ? 96 : 48;
 
+wire [31:0] itch_user_regs [5];
+
 // flashing via PCIe VPD
 pyrite_pcie_us_vpd_qspi #(
     .VPD_CAP_ID(8'h03),
@@ -199,11 +201,14 @@ pyrite_pcie_us_vpd_qspi #(
     .FLASH_SEG_FALLBACK(0),
     .FLASH_SEG0_SIZE(32'h00000000),
     .FLASH_DATA_W(4),
-    .FLASH_DUAL_QSPI(1'b0)
+    .FLASH_DUAL_QSPI(1'b0),
+    .USER_REG_CNT(5)
 )
 pyrite_inst (
     .clk(pcie_clk),
     .rst(pcie_rst),
+
+    .user_regs(itch_user_regs),
 
     /*
      * PCIe
@@ -880,6 +885,24 @@ always_ff @(posedge sfp_rx_clk[0]) begin
         itch_trig_led <= 1'b0;
     end
 end
+
+wire [31:0] itch_bid_px_pcie, itch_bid_qty_pcie, itch_ask_px_pcie, itch_ask_qty_pcie;
+
+taxi_sync_signal #(.WIDTH(32), .N(3)) sync_bid_px  (.clk(pcie_clk), .in(itch_bid_px),  .out(itch_bid_px_pcie));
+taxi_sync_signal #(.WIDTH(32), .N(3)) sync_bid_qty (.clk(pcie_clk), .in(itch_bid_qty), .out(itch_bid_qty_pcie));
+taxi_sync_signal #(.WIDTH(32), .N(3)) sync_ask_px  (.clk(pcie_clk), .in(itch_ask_px),  .out(itch_ask_px_pcie));
+taxi_sync_signal #(.WIDTH(32), .N(3)) sync_ask_qty (.clk(pcie_clk), .in(itch_ask_qty), .out(itch_ask_qty_pcie));
+
+wire itch_ladder_ovf_pcie, itch_fifo_ovf_pcie;
+taxi_sync_signal #(.WIDTH(2), .N(3)) sync_ovf (
+    .clk(pcie_clk), .in({itch_fifo_ovf, itch_ladder_ovf}),
+    .out({itch_fifo_ovf_pcie, itch_ladder_ovf_pcie}));
+
+assign itch_user_regs[0] = itch_bid_px_pcie;
+assign itch_user_regs[1] = itch_bid_qty_pcie;
+assign itch_user_regs[2] = itch_ask_px_pcie;
+assign itch_user_regs[3] = itch_ask_qty_pcie;
+assign itch_user_regs[4] = {30'd0, itch_fifo_ovf_pcie, itch_ladder_ovf_pcie};
 
 endmodule
 
