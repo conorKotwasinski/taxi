@@ -9,7 +9,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge
 
-from cocotbext.axi import AxiStreamBus, AxiStreamSource, AxiStreamFrame
+from cocotbext.axi import AxiStreamBus, AxiStreamSource, AxiStreamSink, AxiStreamFrame
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'fpga_core'))
 import itch
@@ -30,6 +30,8 @@ class TB:
 
         self.source = AxiStreamSource(
             AxiStreamBus.from_entity(dut.s_axis_rx), dut.clk, dut.rst)
+        self.delta_sink = AxiStreamSink(
+            AxiStreamBus.from_entity(dut.m_axis_delta), dut.clk, dut.rst)
 
         dut.cfg_imbalance_thresh.setimmediatevalue(0)
         dut.dbg_sym.setimmediatevalue(0)
@@ -190,6 +192,56 @@ async def run_test_trigger(dut):
     tb.log.info("trigger events: %r", tb.trig_events)
     assert fired_aapl_bid, "expected AAPL bid-heavy trigger"
     assert not fired_msft, "MSFT is balanced; should not trigger"
+
+@cocotb.test()
+async def run_test_delta_emit(dut):
+
+    tb = TB(dut)
+    await tb.reset()
+
+    mk = itch._mk
+    framed = itch._framed
+    stream = framed(
+        mk('A', ref=1, side='B', shares=100, stock='AAPL', price=1500000),
+        mk('A', ref=2, side='B', shares=200, stock='AAPL', price=1499900),
+        mk('A', ref=3, side='S', shares=150, stock='AAPL', price=1500100),
+        mk('A', ref=4, side='B', shares=400, stock='AAPL', price=1500000),
+        mk('A', ref=5, side='S', shares=250, stock='MSFT', price=4200100),
+        mk('E', ref=1, shares=40),
+        mk('D', ref=3),
+    )
+    book = itch.build_book(stream, symbols=SYMBOLS)
+
+    await tb.send_stream(stream, ts=0x0123456789AB)
+    for _ in range(50):
+        await RisingEdge(dut.clk)
+
+    records = []
+    while not tb.delta_sink.empty():
+        frame = tb.delta_sink.recv_nowait()
+        records.append(bytes(frame.tdata))
+
+    tb.log.info("got %d delta records", len(records))
+    assert records, "no delta records emitted"
+
+    last_by_sym = {}
+    prev_seq = -1
+    for rec in records:
+        assert len(rec) == 32, f"record must be 32 bytes, got {len(rec)}"
+        ts = int.from_bytes(rec[0:8], 'little')
+        bid_px, ask_px = struct.unpack_from('<II', rec, 8)
+        bid_q,  ask_q  = struct.unpack_from('<II', rec, 16)
+        sym, flags, seq = struct.unpack_from('<HHI', rec, 24)
+        assert seq == prev_seq + 1, f"seq not monotonic: {seq} after {prev_seq}"
+        prev_seq = seq
+        last_by_sym[sym] = (bid_px, bid_q, ask_px, ask_q)
+
+    for name in ('AAPL', 'MSFT'):
+        sid = SYM_ID[name]
+        exp = book.top_of_book(name)
+        got = last_by_sym.get(sid)
+        tb.log.info("%s: last-delta=%r golden=%r", name, got, exp)
+        assert got == exp, f"{name}: delta {got} != golden {exp}"
 
 tests_dir = os.path.abspath(os.path.dirname(__file__))
 rtl_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'rtl'))

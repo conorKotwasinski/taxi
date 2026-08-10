@@ -174,14 +174,37 @@ module itch_decode #
 
     assign s_axis_rx.tready = (state_reg != STATE_DECODE);
 
-    assign m_axis_delta.tdata  = '0;
-    assign m_axis_delta.tkeep  = '0;
-    assign m_axis_delta.tstrb  = '0;
-    assign m_axis_delta.tlast  = 1'b0;
+    logic              emit_active_reg;
+    logic [1:0]        beat_idx_reg;
+    logic [31:0]       seq_reg;
+    logic [31:0]       seq_snap_reg;
+    logic              delta_ovf_reg;
+
+    logic [TS_W-1:0]   snap_ts_reg;
+    logic [SYM_AW-1:0] snap_sym_reg;
+    logic [7:0]        snap_flags_reg;
+    logic [PRICE_W-1:0] snap_bidpx_reg, snap_askpx_reg;
+    logic [QTY_W-1:0]   snap_bidq_reg,  snap_askq_reg;
+
+    logic [63:0] delta_beat;
+    always_comb begin
+        case (beat_idx_reg)
+            2'd0: delta_beat = 64'(snap_ts_reg);
+            2'd1: delta_beat = {snap_askpx_reg, snap_bidpx_reg};
+            2'd2: delta_beat = {snap_askq_reg,  snap_bidq_reg};
+            default: delta_beat = {seq_snap_reg, snap_flags_reg, 8'd0,
+                                   {(16-SYM_AW){1'b0}}, snap_sym_reg};
+        endcase
+    end
+
+    assign m_axis_delta.tdata  = delta_beat;
+    assign m_axis_delta.tkeep  = '1;
+    assign m_axis_delta.tstrb  = '1;
+    assign m_axis_delta.tlast  = emit_active_reg && (beat_idx_reg == 2'd3);
     assign m_axis_delta.tid    = '0;
     assign m_axis_delta.tdest  = '0;
     assign m_axis_delta.tuser  = '0;
-    assign m_axis_delta.tvalid = 1'b0;
+    assign m_axis_delta.tvalid = emit_active_reg;
 
     logic [SYM_AW-1:0] upd_sym_reg;
     logic              upd_pending_reg;
@@ -336,6 +359,31 @@ module itch_decode #
         end
         upd_pending_reg <= 1'b0;
 
+        if (upd_pending_reg) begin
+            if (!emit_active_reg) begin
+                emit_active_reg <= 1'b1;
+                beat_idx_reg    <= 2'd0;
+                seq_snap_reg    <= seq_reg;
+                seq_reg         <= seq_reg + 1;
+                snap_ts_reg     <= ts_reg;
+                snap_sym_reg    <= upd_sym_reg;
+                snap_flags_reg  <= {6'd0, tsym_ask_q == 0, tsym_bid_q == 0};
+                snap_bidpx_reg  <= tsym_bid_px;
+                snap_bidq_reg   <= tsym_bid_q;
+                snap_askpx_reg  <= tsym_ask_px;
+                snap_askq_reg   <= tsym_ask_q;
+            end else begin
+                delta_ovf_reg <= 1'b1;
+            end
+        end
+
+        if (emit_active_reg && m_axis_delta.tready) begin
+            if (beat_idx_reg == 2'd3)
+                emit_active_reg <= 1'b0;
+            else
+                beat_idx_reg <= beat_idx_reg + 1;
+        end
+
         if (beat && state_reg == STATE_MSG_BODY)
             msg_buf[bidx_reg] <= rx_b;
 
@@ -477,6 +525,10 @@ module itch_decode #
             frame_done_reg <= 1'b0;
             trig_valid_reg <= 1'b0;
             upd_pending_reg <= 1'b0;
+            emit_active_reg <= 1'b0;
+            beat_idx_reg    <= 2'd0;
+            seq_reg         <= '0;
+            delta_ovf_reg   <= 1'b0;
             for (int i = 0; i < LAD_N; i++)
                 lad_v[i] <= 1'b0;
             for (int o = 0; o < ORDER_COUNT; o++)
