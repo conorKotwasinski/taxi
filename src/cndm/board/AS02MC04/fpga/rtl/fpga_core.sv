@@ -178,6 +178,7 @@ localparam logic PTP_TS_FMT_TOD = 1'b0;
 localparam PTP_TS_W = PTP_TS_FMT_TOD ? 96 : 48;
 
 wire [31:0] itch_user_regs [5];
+wire [31:0] itch_user_ctrl [1];
 
 // flashing via PCIe VPD
 pyrite_pcie_us_vpd_qspi #(
@@ -202,13 +203,16 @@ pyrite_pcie_us_vpd_qspi #(
     .FLASH_SEG0_SIZE(32'h00000000),
     .FLASH_DATA_W(4),
     .FLASH_DUAL_QSPI(1'b0),
-    .USER_REG_CNT(5)
+    .USER_REG_CNT(5),
+    .USER_CTRL_CNT(1),
+    .USER_CTRL_RST('{32'd10000})
 )
 pyrite_inst (
     .clk(pcie_clk),
     .rst(pcie_rst),
 
     .user_regs(itch_user_regs),
+    .user_ctrl(itch_user_ctrl),
 
     /*
      * PCIe
@@ -843,7 +847,9 @@ wire        itch_ladder_ovf, itch_fifo_ovf;
 wire        itch_trig_valid, itch_trig_side;
 wire [1:0]  itch_trig_sym;
 
-localparam [31:0] ITCH_IMBALANCE_THRESH = 32'd10000;
+wire [31:0] itch_thresh_rx;
+taxi_sync_signal #(.WIDTH(32), .N(3)) sync_thresh (
+    .clk(sfp_rx_clk[0]), .in(itch_user_ctrl[0]), .out(itch_thresh_rx));
 
 itch_tap #(
     .SYM_COUNT(4),
@@ -861,7 +867,7 @@ itch_tap_inst (
     .axis_mon(axis_sfp_rx[0]),
     .ladder_overflow(itch_ladder_ovf),
     .fifo_overflow(itch_fifo_ovf),
-    .cfg_imbalance_thresh(ITCH_IMBALANCE_THRESH),
+    .cfg_imbalance_thresh(itch_thresh_rx),
     .trig_valid(itch_trig_valid),
     .trig_sym(itch_trig_sym),
     .trig_side(itch_trig_side),

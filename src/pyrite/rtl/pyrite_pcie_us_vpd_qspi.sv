@@ -39,13 +39,18 @@ module pyrite_pcie_us_vpd_qspi #
     parameter FLASH_DATA_W = 4,
     parameter logic FLASH_DUAL_QSPI = 1'b1,
 
-    parameter USER_REG_CNT = 0
+    parameter USER_REG_CNT = 0,
+
+    parameter USER_CTRL_CNT = 0,
+    parameter logic [31:0] USER_CTRL_RST [USER_CTRL_CNT == 0 ? 1 : USER_CTRL_CNT] = '{default: '0}
 )
 (
     input  wire logic                     clk,
     input  wire logic                     rst,
 
     input  wire logic [31:0]              user_regs [USER_REG_CNT == 0 ? 1 : USER_REG_CNT] = '{default: '0},
+
+    output wire logic [31:0]              user_ctrl [USER_CTRL_CNT == 0 ? 1 : USER_CTRL_CNT],
 
     /*
      * PCIe
@@ -151,6 +156,11 @@ vpd_ram_inst (
 logic vpd_apb_pready_reg = 1'b0;
 logic [31:0] vpd_apb_prdata_reg = '0;
 
+logic [31:0] user_ctrl_reg [USER_CTRL_CNT == 0 ? 1 : USER_CTRL_CNT];
+for (genvar uc = 0; uc < USER_CTRL_CNT; uc++) begin : g_user_ctrl
+    assign user_ctrl[uc] = user_ctrl_reg[uc];
+end
+
 logic fpga_boot_reg = 1'b0;
 
 logic qspi_clk_reg = 1'b0;
@@ -224,7 +234,12 @@ always_ff @(posedge clk) begin
                         end
                     end
                 end
-                default: begin end
+                default: begin
+                    for (int uc = 0; uc < USER_CTRL_CNT; uc++) begin
+                        if (8'({vpd_apb_int[1].paddr >> 2, 2'b00}) == 8'(8'h80 + uc*4))
+                            user_ctrl_reg[uc] <= vpd_apb_int[1].pwdata;
+                    end
+                end
             endcase
         end
 
@@ -273,6 +288,10 @@ always_ff @(posedge clk) begin
                     if (8'({vpd_apb_int[1].paddr >> 2, 2'b00}) == 8'(8'h60 + ur*4))
                         vpd_apb_prdata_reg <= user_regs[ur];
                 end
+                for (int uc = 0; uc < USER_CTRL_CNT; uc++) begin
+                    if (8'({vpd_apb_int[1].paddr >> 2, 2'b00}) == 8'(8'h80 + uc*4))
+                        vpd_apb_prdata_reg <= user_ctrl_reg[uc];
+                end
             end
         endcase
     end
@@ -289,6 +308,9 @@ always_ff @(posedge clk) begin
         qspi_1_cs_reg <= 1'b1;
         qspi_1_dq_o_reg <= '0;
         qspi_1_dq_oe_reg <= '0;
+
+        for (int uc = 0; uc < USER_CTRL_CNT; uc++)
+            user_ctrl_reg[uc] <= USER_CTRL_RST[uc];
     end
 end
 
