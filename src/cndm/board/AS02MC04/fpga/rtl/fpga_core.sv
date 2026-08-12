@@ -854,7 +854,7 @@ taxi_sync_signal #(.WIDTH(32), .N(3)) sync_thresh (
 itch_tap #(
     .SYM_COUNT(4),
     .LEVELS(16),
-    .ORDER_COUNT(4096),
+    .ORDER_COUNT(1024),
     .PRICE_W(32),
     .QTY_W(32),
     .ORDER_REF_W(64),
