@@ -29,50 +29,54 @@ class TB:
         for _ in range(2):
             await RisingEdge(self.dut.clk)
         self.dut.rst.value = 1
-        for _ in range(2):
+        for _ in range(3):
             await RisingEdge(self.dut.clk)
         self.dut.rst.value = 0
-        for _ in range(2):
+        for _ in range(3):
             await RisingEdge(self.dut.clk)
 
-async def _addr_monitor(dut, seen):
-
+async def _monitor(dut, seen):
     prev = 0
     while True:
         await RisingEdge(dut.clk)
         c = int(dut.accept_count.value)
         if c != prev:
-            seen.append(int(dut.last_dst_addr.value))
+            addr = int(dut.last_dst_addr.value)
+            data = int(dut.captured.value).to_bytes(REC_BYTES, 'little')
+            seen.append((addr, data))
             prev = c
 
 @cocotb.test()
-async def run_test_ring(dut):
+async def run_test_dma_client(dut):
     tb = TB(dut)
     await tb.reset()
     dut.cfg_ring_enable.value = 1
 
     seen = []
-    cocotb.start_soon(_addr_monitor(dut, seen))
+    cocotb.start_soon(_monitor(dut, seen))
 
-    N = 20
+    N = 12
+    sent = []
     for i in range(N):
+        rec = bytes(((i * 7 + k) & 0xff) for k in range(REC_BYTES))
+        sent.append(rec)
+        await tb.source.send(AxiStreamFrame(rec))
 
-        await tb.source.send(AxiStreamFrame(bytes((i + k) & 0xff for k in range(REC_BYTES))))
-
-        for _ in range(12):
+        for _ in range(40):
             await RisingEdge(dut.clk)
 
-    for _ in range(20):
+    for _ in range(40):
         await RisingEdge(dut.clk)
 
-    tb.log.info("descriptors seen: %d, prod_ptr=%d", len(seen), int(dut.prod_ptr.value))
+    tb.log.info("descriptors=%d prod_ptr=%d", len(seen), int(dut.prod_ptr.value))
     assert len(seen) == N, f"expected {N} descriptors, got {len(seen)}"
-    assert int(dut.prod_ptr.value) == N, "prod_ptr should count all records"
+    assert int(dut.prod_ptr.value) == N
 
-    for i, addr in enumerate(seen):
-        exp = BASE + (i % RING_ENTRIES) * REC_BYTES
-        assert addr == exp, f"record {i}: addr {addr:#x} != expected {exp:#x}"
-    tb.log.info("ring addressing + wrap verified over %d records", N)
+    for i, (addr, data) in enumerate(seen):
+        exp_addr = BASE + (i % RING_ENTRIES) * REC_BYTES
+        assert addr == exp_addr, f"rec {i}: addr {addr:#x} != {exp_addr:#x}"
+        assert data == sent[i], f"rec {i}: data mismatch\n got {data.hex()}\n exp {sent[i].hex()}"
+    tb.log.info("addressing + wrap + data integrity verified over %d records", N)
 
 tests_dir = os.path.abspath(os.path.dirname(__file__))
 rtl_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'rtl'))
@@ -89,11 +93,16 @@ def test_itch_delta_dma(request):
         os.path.join(rtl_dir, "itch_delta_dma.sv"),
         os.path.join(taxi_src_dir, "axis", "rtl", "taxi_axis_if.sv"),
         os.path.join(taxi_src_dir, "dma", "rtl", "taxi_dma_desc_if.sv"),
+        os.path.join(taxi_src_dir, "dma", "rtl", "taxi_dma_ram_if.sv"),
+        os.path.join(taxi_src_dir, "dma", "rtl", "taxi_dma_psdpram.sv"),
+        os.path.join(taxi_src_dir, "dma", "rtl", "taxi_dma_client_axis_sink.sv"),
     ]
 
     parameters = {
         'REC_BYTES': REC_BYTES, 'RING_ENTRIES': RING_ENTRIES,
-        'ADDR_W': 64, 'LEN_W': 16, 'TAG_W': 8,
+        'ADDR_W': 64, 'LEN_W': 20, 'TAG_W': 8,
+        'RAM_SEGS': 2, 'RAM_SEG_ADDR_W': 12, 'RAM_SEG_DATA_W': 128,
+        'RAM_SEG_BE_W': 16, 'RAM_SEL_W': 2,
     }
     extra_env = {f'PARAM_{k}': str(v) for k, v in parameters.items()}
     sim_build = os.path.join(tests_dir, "sim_build",

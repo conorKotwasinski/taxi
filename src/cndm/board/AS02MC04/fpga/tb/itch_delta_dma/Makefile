@@ -19,6 +19,9 @@ VERILOG_SOURCES += $(COCOTB_TOPLEVEL).sv
 VERILOG_SOURCES += $(RTL_DIR)/itch_delta_dma.sv
 VERILOG_SOURCES += $(TAXI_SRC_DIR)/axis/rtl/taxi_axis_if.sv
 VERILOG_SOURCES += $(TAXI_SRC_DIR)/dma/rtl/taxi_dma_desc_if.sv
+VERILOG_SOURCES += $(TAXI_SRC_DIR)/dma/rtl/taxi_dma_ram_if.sv
+VERILOG_SOURCES += $(TAXI_SRC_DIR)/dma/rtl/taxi_dma_psdpram.sv
+VERILOG_SOURCES += $(TAXI_SRC_DIR)/dma/rtl/taxi_dma_client_axis_sink.sv
 
 process_f_file = $(call process_f_files,$(addprefix $(dir $1),$(shell cat $1)))
 process_f_files = $(foreach f,$1,$(if $(filter %.f,$f),$(call process_f_file,$f),$f))
@@ -28,8 +31,13 @@ VERILOG_SOURCES := $(call uniq_base,$(call process_f_files,$(VERILOG_SOURCES)))
 export PARAM_REC_BYTES := 32
 export PARAM_RING_ENTRIES := 8
 export PARAM_ADDR_W := 64
-export PARAM_LEN_W := 16
+export PARAM_LEN_W := 20
 export PARAM_TAG_W := 8
+export PARAM_RAM_SEGS := 2
+export PARAM_RAM_SEG_ADDR_W := 12
+export PARAM_RAM_SEG_DATA_W := 128
+export PARAM_RAM_SEG_BE_W := 16
+export PARAM_RAM_SEL_W := 2
 
 ifeq ($(SIM), verilator)
 	COMPILE_ARGS += $(foreach v,$(filter PARAM_%,$(.VARIABLES)),-G$(subst PARAM_,,$(v))=$($(v)))
