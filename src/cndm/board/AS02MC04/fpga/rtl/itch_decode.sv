@@ -237,7 +237,7 @@ module itch_decode #
         if (state_reg == STATE_DECODE)
             state_next = STATE_SEARCH;
 
-        if (state_reg == STATE_SEARCH && srch_i == (LVL_AW+1)'(LEVELS-1))
+        if (state_reg == STATE_SEARCH && srch_i == (LVL_AW+1)'(LEVELS))
             state_next = STATE_APPLY;
 
         if (state_reg == STATE_APPLY)
@@ -323,6 +323,11 @@ module itch_decode #
     logic [LVL_AW:0]    srch_i;
     logic [LVL_AW:0]    slot_a, slot_b, slot_free;
     logic [QTY_W-1:0]   slot_a_q, slot_b_q;
+
+    logic               sr_vld, sr_v;
+    logic [LVL_AW:0]    sr_i;
+    logic [PRICE_W-1:0] sr_px;
+    logic [QTY_W-1:0]   sr_q;
 
     logic [LVL_AW:0]    scan_i;
     logic               rd_vld, rd_vb, rd_va;
@@ -414,6 +419,7 @@ module itch_decode #
             slot_a    <= (LVL_AW+1)'(LEVELS);
             slot_b    <= (LVL_AW+1)'(LEVELS);
             slot_free <= (LVL_AW+1)'(LEVELS);
+            sr_vld    <= 1'b0;
             slot_a_q  <= '0;
             slot_b_q  <= '0;
 
@@ -447,17 +453,24 @@ module itch_decode #
 
         STATE_SEARCH: begin
             srch_i <= srch_i + 1;
-            if (lad_v[d_base + 32'(srch_i)]) begin
-                if (lad_px[d_base + 32'(srch_i)] == d_px_a) begin
-                    slot_a   <= srch_i;
-                    slot_a_q <= lad_q[d_base + 32'(srch_i)];
+            sr_vld <= (srch_i < (LVL_AW+1)'(LEVELS));
+            sr_i   <= srch_i;
+            sr_v   <= lad_v [d_base + 32'(srch_i)];
+            sr_px  <= lad_px[d_base + 32'(srch_i)];
+            sr_q   <= lad_q [d_base + 32'(srch_i)];
+            if (sr_vld) begin
+                if (sr_v) begin
+                    if (sr_px == d_px_a) begin
+                        slot_a   <= sr_i;
+                        slot_a_q <= sr_q;
+                    end
+                    if (sr_px == d_px_b) begin
+                        slot_b   <= sr_i;
+                        slot_b_q <= sr_q;
+                    end
+                end else if (slot_free == (LVL_AW+1)'(LEVELS)) begin
+                    slot_free <= sr_i;
                 end
-                if (lad_px[d_base + 32'(srch_i)] == d_px_b) begin
-                    slot_b   <= srch_i;
-                    slot_b_q <= lad_q[d_base + 32'(srch_i)];
-                end
-            end else if (slot_free == (LVL_AW+1)'(LEVELS)) begin
-                slot_free <= srch_i;
             end
         end
 
