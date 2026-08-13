@@ -2,13 +2,13 @@ import logging
 import os
 import sys
 
+import pytest
+
 import cocotb_test.simulator
 
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge
-
-from cocotbext.axi import AxiStreamBus, AxiStreamSource, AxiStreamFrame
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'fpga_core'))
 import itch
@@ -18,15 +18,21 @@ SYM_ID = {s: i for i, s in enumerate(SYMBOLS)}
 HDR_SKIP_BYTES = 14
 TS_W = 48
 
+GEN_MSGS = [
+    dict(ref=1, side='B', shares=100, stock='AAPL', price=1500000),
+    dict(ref=2, side='S', shares=200, stock='AAPL', price=1500100),
+    dict(ref=3, side='B', shares=300, stock='AAPL', price=1500000),
+]
+
+def gen_stream():
+    return itch._framed(*[itch._mk('A', **m) for m in GEN_MSGS])
+
 class TB:
     def __init__(self, dut):
         self.dut = dut
         self.log = logging.getLogger("cocotb.tb")
         self.log.setLevel(logging.INFO)
         cocotb.start_soon(Clock(dut.clk, 3.2, units="ns").start())
-
-        self.source = AxiStreamSource(
-            AxiStreamBus.from_entity(dut.axis_rx), dut.clk, dut.rst)
         dut.dbg_sym.setimmediatevalue(0)
 
     async def reset(self):
@@ -40,17 +46,20 @@ class TB:
         for _ in range(2):
             await RisingEdge(self.dut.clk)
 
-    async def send_stream(self, stream_bytes, ts=0):
-
-        for _ in range(8):
+    async def capture_frame(self, timeout=40000):
+        data = bytearray()
+        lanes = len(self.dut.axis_loop.tdata.value) // 8
+        for _ in range(timeout):
             await RisingEdge(self.dut.clk)
-        frame = AxiStreamFrame(bytes(HDR_SKIP_BYTES) + stream_bytes,
-                               tuser=(ts << 1))
-        await self.source.send(frame)
-        await self.source.wait()
-
-        for _ in range(4000):
-            await RisingEdge(self.dut.clk)
+            if self.dut.axis_loop.tvalid.value and self.dut.axis_loop.tready.value:
+                word = int(self.dut.axis_loop.tdata.value)
+                keep = int(self.dut.axis_loop.tkeep.value)
+                for b in range(lanes):
+                    if (keep >> b) & 1:
+                        data.append((word >> (8 * b)) & 0xFF)
+                if self.dut.axis_loop.tlast.value:
+                    return bytes(data)
+        raise AssertionError("no frame generated before timeout")
 
     async def read_tob(self, sym_id):
         self.dut.dbg_sym.value = sym_id
@@ -61,59 +70,58 @@ class TB:
                 int(self.dut.dbg_ask_px.value),
                 int(self.dut.dbg_ask_qty.value))
 
-def _stream():
-    mk = itch._mk
-    framed = itch._framed
-    return framed(
-        mk('A', ref=1, side='B', shares=100, stock='AAPL', price=1500000),
-        mk('A', ref=2, side='B', shares=200, stock='AAPL', price=1499900),
-        mk('A', ref=3, side='S', shares=150, stock='AAPL', price=1500100),
-        mk('A', ref=7, side='B', shares=400, stock='AAPL', price=1500000),
-        mk('A', ref=5, side='B', shares=500, stock='MSFT', price=4200000),
-        mk('A', ref=6, side='S', shares=250, stock='MSFT', price=4200100),
-        mk('D', ref=1),
-        mk('E', ref=7, shares=40),
-    )
-
 @cocotb.test()
-async def run_test_tap(dut):
+async def run_test_frame_bytes(dut):
     tb = TB(dut)
     await tb.reset()
 
-    stream = _stream()
-    book = itch.build_book(stream, symbols=SYMBOLS)
+    frame = await tb.capture_frame()
+    payload = gen_stream()
+    expected = bytes.fromhex('ffffffffffff') + bytes.fromhex('020000000002') \
+        + bytes.fromhex('0800') + payload
 
-    await tb.send_stream(stream, ts=0x0123456789AB)
+    tb.log.info("captured %d bytes: %s", len(frame), frame.hex())
+    assert len(frame) == 128, f"frame is {len(frame)} bytes, expected 128"
+    assert frame == expected, (
+        f"frame mismatch\n got {frame.hex()}\nwant {expected.hex()}")
+
+    frame2 = await tb.capture_frame()
+    assert frame2 == frame, "second generated frame differs from the first"
+
+@cocotb.test()
+async def run_test_loopback_book(dut):
+    tb = TB(dut)
+    await tb.reset()
+
+    await tb.capture_frame()
+    for _ in range(1500):
+        await RisingEdge(dut.clk)
 
     assert int(dut.fifo_overflow.value) == 0, "snoop FIFO overflowed"
 
-    for sym in ('AAPL', 'MSFT'):
-        tob = await tb.read_tob(SYM_ID[sym])
-        exp = book.top_of_book(sym)
-        tb.log.info("%s: DUT=%r golden=%r", sym, tob, exp)
-        assert tob == exp, f"{sym}: DUT {tob} != golden {exp}"
+    book = itch.build_book(gen_stream(), symbols=SYMBOLS)
+    exp = book.top_of_book('AAPL')
+    tob = await tb.read_tob(SYM_ID['AAPL'])
+    tb.log.info("AAPL: DUT=%r golden=%r", tob, exp)
+    assert tob == exp, f"AAPL: DUT {tob} != golden {exp}"
+
+    assert tob == (1500000, 400, 1500100, 200), f"unexpected book {tob}"
 
 @cocotb.test()
-async def run_test_tap_with_interfering_traffic(dut):
+async def run_test_repeat_accumulates(dut):
     tb = TB(dut)
     await tb.reset()
 
-    junk = bytes(HDR_SKIP_BYTES) + b"\x3f\xff" + bytes(40)
-    for _ in range(4):
-        await tb.source.send(AxiStreamFrame(junk, tuser=0))
-        await tb.source.wait()
-    for _ in range(200):
-        await RisingEdge(dut.clk)
+    seen = []
+    for _ in range(3):
+        await tb.capture_frame()
+        for _ in range(1500):
+            await RisingEdge(dut.clk)
+        seen.append(await tb.read_tob(SYM_ID['AAPL']))
 
-    stream = _stream()
-    book = itch.build_book(stream, symbols=SYMBOLS)
-    await tb.send_stream(stream, ts=0x0123456789AB)
-
-    for sym in ('AAPL', 'MSFT'):
-        tob = await tb.read_tob(SYM_ID[sym])
-        exp = book.top_of_book(sym)
-        tb.log.info("%s after junk: DUT=%r golden=%r", sym, tob, exp)
-        assert tob == exp, f"{sym}: DUT {tob} != golden {exp} after junk frames"
+    tb.log.info("book after each frame: %r", seen)
+    assert [b[1] for b in seen] == [400, 800, 1200], f"bid qty {seen}"
+    assert [b[3] for b in seen] == [200, 400, 600], f"ask qty {seen}"
 
 tests_dir = os.path.abspath(os.path.dirname(__file__))
 rtl_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'rtl'))
@@ -132,13 +140,14 @@ def process_f_files(files):
             lst[os.path.basename(f)] = f
     return list(lst.values())
 
-def test_itch_tap(request):
-    dut = "itch_tap"
+@pytest.mark.parametrize("data_w", [32, 64])
+def test_itch_frame_gen(request, data_w):
     module = os.path.splitext(os.path.basename(__file__))[0]
     toplevel = module
 
     verilog_sources = [
         os.path.join(tests_dir, f"{toplevel}.sv"),
+        os.path.join(rtl_dir, "itch_frame_gen.sv"),
         os.path.join(rtl_dir, "itch_tap.sv"),
         os.path.join(rtl_dir, "itch_decode.sv"),
         os.path.join(taxi_src_dir, "axis", "rtl", "taxi_axis_if.sv"),
@@ -149,7 +158,8 @@ def test_itch_tap(request):
     verilog_sources = process_f_files(verilog_sources)
 
     parameters = {
-        'SYM_COUNT': 4, 'LEVELS': 16, 'ORDER_COUNT': 4096,
+        'DATA_W': data_w, 'INTERVAL': 6000,
+        'SYM_COUNT': 4, 'LEVELS': 16, 'ORDER_COUNT': 1024,
         'PRICE_W': 32, 'QTY_W': 32, 'ORDER_REF_W': 64, 'TS_W': TS_W,
         'HDR_SKIP_BYTES': HDR_SKIP_BYTES,
     }

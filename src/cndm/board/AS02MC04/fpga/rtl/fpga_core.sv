@@ -47,7 +47,8 @@ module fpga_core #
     // MAC configuration
     parameter logic CFG_LOW_LATENCY = 1'b1,
     parameter logic COMBINED_MAC_PCS = 1'b1,
-    parameter MAC_DATA_W = 64
+    parameter MAC_DATA_W = 64,
+    parameter logic ITCH_GEN_EN = 1'b0
 )
 (
     /*
@@ -403,6 +404,7 @@ assign sfp_mgt_refclk_out = sfp_mgt_refclk_bufg;
 wire sfp_rst;
 
 taxi_axis_if #(.DATA_W(MAC_DATA_W), .ID_W(8), .USER_EN(1), .USER_W(1)) axis_sfp_tx[2]();
+taxi_axis_if #(.DATA_W(MAC_DATA_W), .ID_W(8), .USER_EN(1), .USER_W(1)) axis_cndm_tx[2]();
 taxi_axis_if #(.DATA_W(PTP_TS_W), .KEEP_W(1), .ID_W(8)) axis_sfp_tx_cpl[2]();
 taxi_axis_if #(.DATA_W(MAC_DATA_W), .ID_W(8), .USER_EN(1), .USER_W(1+PTP_TS_W)) axis_sfp_rx[2]();
 taxi_axis_if #(.DATA_W(16), .KEEP_W(1), .KEEP_EN(0), .LAST_EN(0), .USER_EN(1), .USER_W(1), .ID_EN(1), .ID_W(8)) axis_sfp_stat();
@@ -834,7 +836,7 @@ cndm_inst (
      */
     .mac_tx_clk(sfp_tx_clk),
     .mac_tx_rst(sfp_tx_rst),
-    .mac_axis_tx(axis_sfp_tx),
+    .mac_axis_tx(axis_cndm_tx),
     .mac_axis_tx_cpl(axis_sfp_tx_cpl),
 
     .mac_rx_clk(sfp_rx_clk),
@@ -877,6 +879,30 @@ itch_tap_inst (
     .dbg_ask_px(itch_ask_px),
     .dbg_ask_qty(itch_ask_qty)
 );
+
+for (genvar p = 0; p < 2; p = p + 1) begin : g_sfp_tx
+    if (ITCH_GEN_EN && p == 1) begin : g_gen
+        itch_frame_gen #(
+            .INTERVAL(32'd6250000)
+        )
+        itch_frame_gen_inst (
+            .clk(sfp_tx_clk[1]),
+            .rst(sfp_tx_rst[1]),
+            .m_axis_tx(axis_sfp_tx[1])
+        );
+        assign axis_cndm_tx[1].tready = 1'b1;
+    end else begin : g_cndm
+        assign axis_sfp_tx[p].tdata   = axis_cndm_tx[p].tdata;
+        assign axis_sfp_tx[p].tkeep   = axis_cndm_tx[p].tkeep;
+        assign axis_sfp_tx[p].tstrb   = axis_cndm_tx[p].tstrb;
+        assign axis_sfp_tx[p].tlast   = axis_cndm_tx[p].tlast;
+        assign axis_sfp_tx[p].tid     = axis_cndm_tx[p].tid;
+        assign axis_sfp_tx[p].tdest   = axis_cndm_tx[p].tdest;
+        assign axis_sfp_tx[p].tuser   = axis_cndm_tx[p].tuser;
+        assign axis_sfp_tx[p].tvalid  = axis_cndm_tx[p].tvalid;
+        assign axis_cndm_tx[p].tready = axis_sfp_tx[p].tready;
+    end
+end
 
 localparam TRIG_STRETCH = 12500000;
 logic [$clog2(TRIG_STRETCH)-1:0] trig_str_cnt = '0;

@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#define ITCH_VPD_REG_BASE      0x4000
+
 #define ITCH_REG_BID_PX        0x60
 #define ITCH_REG_BID_QTY       0x64
 #define ITCH_REG_ASK_PX        0x68

@@ -61,12 +61,17 @@ module itch_decode #
     localparam [63:0] SYM_TICKER2 = "NVDA    ";
     localparam [63:0] SYM_TICKER3 = "AMZN    ";
 
-    typedef enum logic [2:0] {
+    typedef enum logic [3:0] {
         STATE_IDLE,
         STATE_SKIP_HDR,
         STATE_MSG_LEN,
         STATE_MSG_BODY,
         STATE_DECODE,
+        STATE_SEARCH,
+        STATE_APPLY,
+        STATE_WRITE,
+        STATE_SCAN,
+        STATE_PUB,
         STATE_DRAIN
     } state_t;
 
@@ -148,31 +153,20 @@ module itch_decode #
     logic [PRICE_W-1:0] lad_px [0:LAD_N-1];
     logic [QTY_W-1:0]   lad_q  [0:LAD_N-1];
 
-    logic [PRICE_W-1:0] scan_bid_px, scan_ask_px;
-    logic [QTY_W-1:0]   scan_bid_q,  scan_ask_q;
-    always_comb begin
-        int bb, ab; int i;
-        bb = (int'(dbg_sym) * 2 + 0) * LEVELS;
-        ab = (int'(dbg_sym) * 2 + 1) * LEVELS;
-        scan_bid_px = '0; scan_bid_q = '0;
-        scan_ask_px = '0; scan_ask_q = '0;
-        for (i = 0; i < LEVELS; i++) begin
-            if (lad_v[bb + i]) begin
-                if (scan_bid_q == 0 || lad_px[bb + i] > scan_bid_px) begin
-                    scan_bid_px = lad_px[bb + i];
-                    scan_bid_q  = lad_q [bb + i];
-                end
-            end
-            if (lad_v[ab + i]) begin
-                if (scan_ask_q == 0 || lad_px[ab + i] < scan_ask_px) begin
-                    scan_ask_px = lad_px[ab + i];
-                    scan_ask_q  = lad_q [ab + i];
-                end
-            end
-        end
-    end
+    logic [PRICE_W-1:0] tob_bid_px [0:SYM_COUNT-1];
+    logic [QTY_W-1:0]   tob_bid_q  [0:SYM_COUNT-1];
+    logic [PRICE_W-1:0] tob_ask_px [0:SYM_COUNT-1];
+    logic [QTY_W-1:0]   tob_ask_q  [0:SYM_COUNT-1];
 
-    assign s_axis_rx.tready = (state_reg != STATE_DECODE);
+    wire [PRICE_W-1:0] scan_bid_px = tob_bid_px[dbg_sym];
+    wire [QTY_W-1:0]   scan_bid_q  = tob_bid_q [dbg_sym];
+    wire [PRICE_W-1:0] scan_ask_px = tob_ask_px[dbg_sym];
+    wire [QTY_W-1:0]   scan_ask_q  = tob_ask_q [dbg_sym];
+
+    wire decoding = (state_reg == STATE_DECODE) || (state_reg == STATE_SEARCH) ||
+                    (state_reg == STATE_APPLY)  || (state_reg == STATE_WRITE)  ||
+                    (state_reg == STATE_SCAN)   || (state_reg == STATE_PUB);
+    assign s_axis_rx.tready = !decoding;
 
     logic              emit_active_reg;
     logic [1:0]        beat_idx_reg;
@@ -209,25 +203,10 @@ module itch_decode #
     logic [SYM_AW-1:0] upd_sym_reg;
     logic              upd_pending_reg;
 
-    logic [QTY_W-1:0]   tsym_bid_q, tsym_ask_q;
-    logic [PRICE_W-1:0] tsym_bid_px, tsym_ask_px;
-    always_comb begin
-        int tb, ta; int i;
-        tb = (int'(upd_sym_reg) * 2 + 0) * LEVELS;
-        ta = (int'(upd_sym_reg) * 2 + 1) * LEVELS;
-        tsym_bid_q = '0; tsym_bid_px = '0;
-        tsym_ask_q = '0; tsym_ask_px = '0;
-        for (i = 0; i < LEVELS; i++) begin
-            if (lad_v[tb + i] && (tsym_bid_q == 0 || lad_px[tb + i] > tsym_bid_px)) begin
-                tsym_bid_px = lad_px[tb + i];
-                tsym_bid_q  = lad_q [tb + i];
-            end
-            if (lad_v[ta + i] && (tsym_ask_q == 0 || lad_px[ta + i] < tsym_ask_px)) begin
-                tsym_ask_px = lad_px[ta + i];
-                tsym_ask_q  = lad_q [ta + i];
-            end
-        end
-    end
+    wire [QTY_W-1:0]   tsym_bid_q  = tob_bid_q [upd_sym_reg];
+    wire [QTY_W-1:0]   tsym_ask_q  = tob_ask_q [upd_sym_reg];
+    wire [PRICE_W-1:0] tsym_bid_px = tob_bid_px[upd_sym_reg];
+    wire [PRICE_W-1:0] tsym_ask_px = tob_ask_px[upd_sym_reg];
 
     logic              trig_valid_reg;
     logic [SYM_AW-1:0] trig_sym_reg;
@@ -255,7 +234,22 @@ module itch_decode #
         bidx_next        = bidx_reg;
         frame_done_next  = frame_done_reg;
 
-        if (state_reg == STATE_DECODE) begin
+        if (state_reg == STATE_DECODE)
+            state_next = STATE_SEARCH;
+
+        if (state_reg == STATE_SEARCH && srch_i == (LVL_AW+1)'(LEVELS-1))
+            state_next = STATE_APPLY;
+
+        if (state_reg == STATE_APPLY)
+            state_next = STATE_WRITE;
+
+        if (state_reg == STATE_WRITE)
+            state_next = STATE_SCAN;
+
+        if (state_reg == STATE_SCAN && scan_i == (LVL_AW+1)'(LEVELS))
+            state_next = STATE_PUB;
+
+        if (state_reg == STATE_PUB) begin
             if (frame_done_reg)
                 state_next = STATE_IDLE;
             else begin
@@ -313,24 +307,40 @@ module itch_decode #
             frame_done_next = 1'b0;
     end
 
-    function automatic int lad_find(input int base, input [PRICE_W-1:0] price);
-        int i; lad_find = LEVELS;
-        for (i = 0; i < LEVELS; i++)
-            if (lad_v[base + i] && lad_px[base + i] == price) lad_find = i;
-    endfunction
+    logic [7:0]             d_type;
+    logic [ORDER_REF_W-1:0] d_ref;
+    logic                   d_sym_tracked;
+    logic                   upd_valid_reg;
+    logic [ORDER_AW-1:0]    d_ref_h, d_new_ref_h;
+    logic [ORDER_REF_W-1:0] d_new_ref;
+    logic [SYM_AW-1:0]      d_sym;
+    logic                   d_side;
+    logic [PRICE_W-1:0]     d_px_a, d_px_b;
+    logic [QTY_W-1:0]       d_shares, d_take, d_l_qty;
+    logic                   d_hit;
+    logic [31:0]            d_base;
 
-    function automatic int lad_free(input int base);
-        int i; lad_free = LEVELS;
-        for (i = LEVELS - 1; i >= 0; i--)
-            if (!lad_v[base + i]) lad_free = i;
-    endfunction
+    logic [LVL_AW:0]    srch_i;
+    logic [LVL_AW:0]    slot_a, slot_b, slot_free;
+    logic [QTY_W-1:0]   slot_a_q, slot_b_q;
 
-    int dec_base;
-    int dec_slot;
-    int rpl_oslot;
-    int rpl_nslot;
-    logic rpl_ofree;
+    logic [LVL_AW:0]    scan_i;
+    logic               rd_vld, rd_vb, rd_va;
+    logic [PRICE_W-1:0] rd_pxb, rd_pxa;
+    logic [QTY_W-1:0]   rd_qb,  rd_qa;
+    logic [PRICE_W-1:0] scan_bpx, scan_apx;
+    logic [QTY_W-1:0]   scan_bq,  scan_aq;
+
     logic [QTY_W-1:0] rpl_q;
+
+    logic               wrA_v_en, wrA_v, wrA_px_en, wrA_q_en;
+    logic [31:0]        wrA_idx;
+    logic [PRICE_W-1:0] wrA_px;
+    logic [QTY_W-1:0]   wrA_q;
+    logic               wrB_v_en, wrB_v, wrB_px_en, wrB_q_en;
+    logic [31:0]        wrB_idx;
+    logic [PRICE_W-1:0] wrB_px;
+    logic [QTY_W-1:0]   wrB_q;
 
     always_ff @(posedge clk) begin
         state_reg      <= state_next;
@@ -387,134 +397,240 @@ module itch_decode #
         if (beat && state_reg == STATE_MSG_BODY)
             msg_buf[bidx_reg] <= rx_b;
 
-        if (state_reg == STATE_DECODE) begin
+        case (state_reg)
+
+        STATE_DECODE: begin
+            d_type        <= w_type;
+            d_ref         <= w_ref;
+            d_ref_h       <= ref_h;
+            d_new_ref     <= w_new_ref;
+            d_new_ref_h   <= new_ref_h;
+            d_hit         <= l_hit;
+            d_l_qty       <= l_qty;
+            d_take        <= l_take;
+            d_sym_tracked <= w_sym_tracked;
+
+            srch_i    <= '0;
+            slot_a    <= (LVL_AW+1)'(LEVELS);
+            slot_b    <= (LVL_AW+1)'(LEVELS);
+            slot_free <= (LVL_AW+1)'(LEVELS);
+            slot_a_q  <= '0;
+            slot_b_q  <= '0;
 
             case (w_type)
                 T_ADD, T_ADD_MPID: begin
-                    if (w_sym_tracked) begin upd_sym_reg <= w_sym; upd_pending_reg <= 1'b1; end
+                    d_sym    <= w_sym;
+                    d_side   <= w_side_bid;
+                    d_px_a   <= w_price_add;
+                    d_px_b   <= w_price_add;
+                    d_shares <= w_shares_add;
+                    d_base   <= 32'((int'(w_sym)*2 + (w_side_bid ? 0 : 1)) * LEVELS);
                 end
-                T_EXEC, T_EXEC_PX, T_CANCEL, T_DELETE, T_REPLACE: begin
-                    if (l_hit) begin upd_sym_reg <= l_sym; upd_pending_reg <= 1'b1; end
+                T_REPLACE: begin
+                    d_sym    <= l_sym;
+                    d_side   <= l_side;
+                    d_px_a   <= l_px;
+                    d_px_b   <= w_price_repl;
+                    d_shares <= w_shares_repl;
+                    d_base   <= 32'((int'(l_sym)*2 + (l_side ? 0 : 1)) * LEVELS);
                 end
-                default: ;
+                default: begin
+                    d_sym    <= l_sym;
+                    d_side   <= l_side;
+                    d_px_a   <= l_px;
+                    d_px_b   <= l_px;
+                    d_shares <= '0;
+                    d_base   <= 32'((int'(l_sym)*2 + (l_side ? 0 : 1)) * LEVELS);
+                end
             endcase
+        end
 
-            case (w_type)
+        STATE_SEARCH: begin
+            srch_i <= srch_i + 1;
+            if (lad_v[d_base + 32'(srch_i)]) begin
+                if (lad_px[d_base + 32'(srch_i)] == d_px_a) begin
+                    slot_a   <= srch_i;
+                    slot_a_q <= lad_q[d_base + 32'(srch_i)];
+                end
+                if (lad_px[d_base + 32'(srch_i)] == d_px_b) begin
+                    slot_b   <= srch_i;
+                    slot_b_q <= lad_q[d_base + 32'(srch_i)];
+                end
+            end else if (slot_free == (LVL_AW+1)'(LEVELS)) begin
+                slot_free <= srch_i;
+            end
+        end
+
+        STATE_APPLY: begin
+            logic ofree;
+            upd_sym_reg   <= d_sym;
+            upd_valid_reg <= 1'b0;
+            scan_i   <= '0;
+            scan_bpx <= '0; scan_bq <= '0;
+            scan_apx <= '0; scan_aq <= '0;
+            rd_vld   <= 1'b0;
+
+            wrA_v_en <= 1'b0; wrA_px_en <= 1'b0; wrA_q_en <= 1'b0;
+            wrB_v_en <= 1'b0; wrB_px_en <= 1'b0; wrB_q_en <= 1'b0;
+            wrA_idx  <= d_base + 32'(slot_a);
+            wrB_idx  <= d_base + 32'(slot_b);
+
+            case (d_type)
                 T_ADD, T_ADD_MPID: begin
-                    if (w_sym_tracked) begin
-                        ord_valid[ref_h] <= 1'b1;
-                        ord_tag  [ref_h] <= w_ref;
-                        ord_sym  [ref_h] <= w_sym;
-                        ord_side [ref_h] <= w_side_bid;
-                        ord_px   [ref_h] <= w_price_add;
-                        ord_qty  [ref_h] <= w_shares_add;
+                    if (d_sym_tracked) begin
+                        ord_valid[d_ref_h] <= 1'b1;
+                        ord_tag  [d_ref_h] <= d_ref;
+                        ord_sym  [d_ref_h] <= d_sym;
+                        ord_side [d_ref_h] <= d_side;
+                        ord_px   [d_ref_h] <= d_px_a;
+                        ord_qty  [d_ref_h] <= d_shares;
 
-                        dec_base = (int'(w_sym) * 2 + (w_side_bid ? 0 : 1)) * LEVELS;
-                        dec_slot = lad_find(dec_base, w_price_add);
-                        if (dec_slot != LEVELS) begin
-                            lad_q[dec_base + dec_slot] <= lad_q[dec_base + dec_slot] + w_shares_add;
+                        if (slot_a != (LVL_AW+1)'(LEVELS)) begin
+                            wrA_q_en <= 1'b1;
+                            wrA_q    <= slot_a_q + d_shares;
+                        end else if (slot_free != (LVL_AW+1)'(LEVELS)) begin
+                            wrA_idx  <= d_base + 32'(slot_free);
+                            wrA_v_en <= 1'b1; wrA_v <= 1'b1;
+                            wrA_px_en<= 1'b1; wrA_px <= d_px_a;
+                            wrA_q_en <= 1'b1; wrA_q  <= d_shares;
                         end else begin
-                            dec_slot = lad_free(dec_base);
-                            if (dec_slot != LEVELS) begin
-                                lad_v [dec_base + dec_slot] <= 1'b1;
-                                lad_px[dec_base + dec_slot] <= w_price_add;
-                                lad_q [dec_base + dec_slot] <= w_shares_add;
-                            end else begin
-                                overflow_reg <= 1'b1;
-                            end
+                            overflow_reg <= 1'b1;
                         end
+                        upd_valid_reg <= 1'b1;
                     end
                 end
 
                 T_EXEC, T_EXEC_PX, T_CANCEL: begin
-                    if (l_hit) begin
-                        ord_qty[ref_h] <= l_qty - l_take;
-                        if (l_qty - l_take == 0)
-                            ord_valid[ref_h] <= 1'b0;
-
-                        dec_base = (int'(l_sym) * 2 + (l_side ? 0 : 1)) * LEVELS;
-                        dec_slot = lad_find(dec_base, l_px);
-                        if (dec_slot != LEVELS) begin
-                            if (lad_q[dec_base + dec_slot] <= l_take)
-                                lad_v[dec_base + dec_slot] <= 1'b0;
-                            else
-                                lad_q[dec_base + dec_slot] <= lad_q[dec_base + dec_slot] - l_take;
+                    if (d_hit) begin
+                        ord_qty[d_ref_h] <= d_l_qty - d_take;
+                        if (d_l_qty - d_take == 0)
+                            ord_valid[d_ref_h] <= 1'b0;
+                        if (slot_a != (LVL_AW+1)'(LEVELS)) begin
+                            if (slot_a_q <= d_take) begin
+                                wrA_v_en <= 1'b1; wrA_v <= 1'b0;
+                            end else begin
+                                wrA_q_en <= 1'b1; wrA_q <= slot_a_q - d_take;
+                            end
                         end
+                        upd_valid_reg <= 1'b1;
                     end
                 end
 
                 T_DELETE: begin
-                    if (l_hit) begin
-                        ord_valid[ref_h] <= 1'b0;
-                        dec_base = (int'(l_sym) * 2 + (l_side ? 0 : 1)) * LEVELS;
-                        dec_slot = lad_find(dec_base, l_px);
-                        if (dec_slot != LEVELS) begin
-                            if (lad_q[dec_base + dec_slot] <= l_qty)
-                                lad_v[dec_base + dec_slot] <= 1'b0;
-                            else
-                                lad_q[dec_base + dec_slot] <= lad_q[dec_base + dec_slot] - l_qty;
+                    if (d_hit) begin
+                        ord_valid[d_ref_h] <= 1'b0;
+                        if (slot_a != (LVL_AW+1)'(LEVELS)) begin
+                            if (slot_a_q <= d_l_qty) begin
+                                wrA_v_en <= 1'b1; wrA_v <= 1'b0;
+                            end else begin
+                                wrA_q_en <= 1'b1; wrA_q <= slot_a_q - d_l_qty;
+                            end
                         end
+                        upd_valid_reg <= 1'b1;
                     end
                 end
 
                 T_REPLACE: begin
-                    if (l_hit) begin
+                    if (d_hit) begin
+                        ord_valid[d_ref_h]     <= 1'b0;
+                        ord_valid[d_new_ref_h] <= 1'b1;
+                        ord_tag  [d_new_ref_h] <= d_new_ref;
+                        ord_sym  [d_new_ref_h] <= d_sym;
+                        ord_side [d_new_ref_h] <= d_side;
+                        ord_px   [d_new_ref_h] <= d_px_b;
+                        ord_qty  [d_new_ref_h] <= d_shares;
 
-                        ord_valid[ref_h]     <= 1'b0;
-                        ord_valid[new_ref_h] <= 1'b1;
-                        ord_tag  [new_ref_h] <= w_new_ref;
-                        ord_sym  [new_ref_h] <= l_sym;
-                        ord_side [new_ref_h] <= l_side;
-                        ord_px   [new_ref_h] <= w_price_repl;
-                        ord_qty  [new_ref_h] <= w_shares_repl;
-
-                        dec_base  = (int'(l_sym) * 2 + (l_side ? 0 : 1)) * LEVELS;
-                        rpl_oslot = lad_find(dec_base, l_px);
-                        rpl_nslot = lad_find(dec_base, w_price_repl);
-
-                        if (l_px == w_price_repl) begin
-
-                            if (rpl_oslot != LEVELS) begin
-                                rpl_q = lad_q[dec_base + rpl_oslot] - l_qty + w_shares_repl;
-                                if (rpl_q == 0)
-                                    lad_v[dec_base + rpl_oslot] <= 1'b0;
-                                else
-                                    lad_q[dec_base + rpl_oslot] <= rpl_q;
+                        if (d_px_a == d_px_b) begin
+                            if (slot_a != (LVL_AW+1)'(LEVELS)) begin
+                                rpl_q = slot_a_q - d_l_qty + d_shares;
+                                if (rpl_q == 0) begin
+                                    wrA_v_en <= 1'b1; wrA_v <= 1'b0;
+                                end else begin
+                                    wrA_q_en <= 1'b1; wrA_q <= rpl_q;
+                                end
                             end
                         end else begin
-
-                            rpl_ofree = 1'b0;
-                            if (rpl_oslot != LEVELS) begin
-                                if (lad_q[dec_base + rpl_oslot] <= l_qty) begin
-                                    lad_v[dec_base + rpl_oslot] <= 1'b0;
-                                    rpl_ofree = 1'b1;
+                            ofree = 1'b0;
+                            if (slot_a != (LVL_AW+1)'(LEVELS)) begin
+                                if (slot_a_q <= d_l_qty) begin
+                                    wrA_v_en <= 1'b1; wrA_v <= 1'b0;
+                                    ofree = 1'b1;
                                 end else begin
-                                    lad_q[dec_base + rpl_oslot] <= lad_q[dec_base + rpl_oslot] - l_qty;
+                                    wrA_q_en <= 1'b1; wrA_q <= slot_a_q - d_l_qty;
                                 end
                             end
 
-                            if (rpl_nslot != LEVELS) begin
-                                lad_q[dec_base + rpl_nslot] <= lad_q[dec_base + rpl_nslot] + w_shares_repl;
-                            end else if (rpl_ofree) begin
-                                lad_v [dec_base + rpl_oslot] <= 1'b1;
-                                lad_px[dec_base + rpl_oslot] <= w_price_repl;
-                                lad_q [dec_base + rpl_oslot] <= w_shares_repl;
+                            if (slot_b != (LVL_AW+1)'(LEVELS)) begin
+                                wrB_q_en <= 1'b1; wrB_q <= slot_b_q + d_shares;
+                            end else if (ofree) begin
+                                wrA_v_en <= 1'b1; wrA_v <= 1'b1;
+                                wrA_px_en<= 1'b1; wrA_px <= d_px_b;
+                                wrA_q_en <= 1'b1; wrA_q  <= d_shares;
+                            end else if (slot_free != (LVL_AW+1)'(LEVELS)) begin
+                                wrB_idx  <= d_base + 32'(slot_free);
+                                wrB_v_en <= 1'b1; wrB_v <= 1'b1;
+                                wrB_px_en<= 1'b1; wrB_px <= d_px_b;
+                                wrB_q_en <= 1'b1; wrB_q  <= d_shares;
                             end else begin
-                                rpl_nslot = lad_free(dec_base);
-                                if (rpl_nslot != LEVELS) begin
-                                    lad_v [dec_base + rpl_nslot] <= 1'b1;
-                                    lad_px[dec_base + rpl_nslot] <= w_price_repl;
-                                    lad_q [dec_base + rpl_nslot] <= w_shares_repl;
-                                end else begin
-                                    overflow_reg <= 1'b1;
-                                end
+                                overflow_reg <= 1'b1;
                             end
                         end
+                        upd_valid_reg <= 1'b1;
                     end
                 end
                 default: ;
             endcase
         end
+
+        STATE_WRITE: begin
+            if (wrA_v_en)  lad_v [wrA_idx] <= wrA_v;
+            if (wrA_px_en) lad_px[wrA_idx] <= wrA_px;
+            if (wrA_q_en)  lad_q [wrA_idx] <= wrA_q;
+            if (wrB_v_en)  lad_v [wrB_idx] <= wrB_v;
+            if (wrB_px_en) lad_px[wrB_idx] <= wrB_px;
+            if (wrB_q_en)  lad_q [wrB_idx] <= wrB_q;
+        end
+
+        STATE_SCAN: begin
+            int bb, ab;
+            bb = (int'(upd_sym_reg)*2 + 0) * LEVELS;
+            ab = (int'(upd_sym_reg)*2 + 1) * LEVELS;
+
+            scan_i <= scan_i + 1;
+
+            rd_vld <= (scan_i < (LVL_AW+1)'(LEVELS));
+            if (scan_i < (LVL_AW+1)'(LEVELS)) begin
+                rd_vb  <= lad_v [bb + 32'(scan_i)];
+                rd_pxb <= lad_px[bb + 32'(scan_i)];
+                rd_qb  <= lad_q [bb + 32'(scan_i)];
+                rd_va  <= lad_v [ab + 32'(scan_i)];
+                rd_pxa <= lad_px[ab + 32'(scan_i)];
+                rd_qa  <= lad_q [ab + 32'(scan_i)];
+            end
+
+            if (rd_vld) begin
+                if (rd_vb && (scan_bq == 0 || rd_pxb > scan_bpx)) begin
+                    scan_bpx <= rd_pxb;
+                    scan_bq  <= rd_qb;
+                end
+                if (rd_va && (scan_aq == 0 || rd_pxa < scan_apx)) begin
+                    scan_apx <= rd_pxa;
+                    scan_aq  <= rd_qa;
+                end
+            end
+        end
+
+        STATE_PUB: begin
+            tob_bid_px[upd_sym_reg] <= scan_bpx;
+            tob_bid_q [upd_sym_reg] <= scan_bq;
+            tob_ask_px[upd_sym_reg] <= scan_apx;
+            tob_ask_q [upd_sym_reg] <= scan_aq;
+            upd_pending_reg <= upd_valid_reg;
+            rd_vld <= 1'b0;
+        end
+
+        default: ;
+        endcase
 
         if (rst) begin
             state_reg      <= STATE_IDLE;
@@ -523,8 +639,11 @@ module itch_decode #
             msg_rem_reg    <= '0;
             bidx_reg       <= '0;
             frame_done_reg <= 1'b0;
-            trig_valid_reg <= 1'b0;
+            trig_valid_reg  <= 1'b0;
             upd_pending_reg <= 1'b0;
+            upd_valid_reg   <= 1'b0;
+            srch_i          <= '0;
+            scan_i          <= '0;
             emit_active_reg <= 1'b0;
             beat_idx_reg    <= 2'd0;
             seq_reg         <= '0;

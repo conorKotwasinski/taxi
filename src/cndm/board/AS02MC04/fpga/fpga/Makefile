@@ -19,6 +19,7 @@ TAXI_SRC_DIR = $(LIB_DIR)/taxi/src
 SYN_FILES = $(RTL_DIR)/fpga.sv
 SYN_FILES += $(RTL_DIR)/fpga_core.sv
 SYN_FILES += $(RTL_DIR)/itch_tap.sv
+SYN_FILES += $(RTL_DIR)/itch_frame_gen.sv
 SYN_FILES += $(RTL_DIR)/itch_decode.sv
 SYN_FILES += $(TAXI_SRC_DIR)/axis/rtl/taxi_axis_adapter.sv
 SYN_FILES += $(TAXI_SRC_DIR)/cndm/rtl/cndm_micro_pcie_us.f

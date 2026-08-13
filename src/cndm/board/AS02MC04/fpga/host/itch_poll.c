@@ -8,10 +8,14 @@
 
 #include "itch_host.h"
 
+#define VPD_CAP      0xB0
+#define VPD_ADDR_OFF (VPD_CAP + 2)
+#define VPD_DATA_OFF (VPD_CAP + 4)
+
 static int vpd_open(const char *bdf)
 {
     char path[256];
-    snprintf(path, sizeof(path), "/sys/bus/pci/devices/%s/vpd", bdf);
+    snprintf(path, sizeof(path), "/sys/bus/pci/devices/%s/config", bdf);
     int fd = open(path, O_RDWR);
     if (fd < 0)
         fprintf(stderr, "open %s: %s\n", path, strerror(errno));
@@ -20,28 +24,48 @@ static int vpd_open(const char *bdf)
 
 static int reg_read(int fd, uint32_t off, uint32_t *val)
 {
-    uint32_t v;
-    ssize_t n = pread(fd, &v, sizeof(v), off);
-    if (n != (ssize_t)sizeof(v))
+    uint16_t addr = (uint16_t)((ITCH_VPD_REG_BASE + off) & 0x7FFF);
+    uint16_t cur;
+
+    if (pwrite(fd, &addr, sizeof(addr), VPD_ADDR_OFF) != (ssize_t)sizeof(addr)) {
+        fprintf(stderr, "vpd addr write failed: %s\n", strerror(errno));
         return -1;
-    *val = v;
-    return 0;
+    }
+    for (int i = 0; i < 400; i++) {
+        if (pread(fd, &cur, sizeof(cur), VPD_ADDR_OFF) != (ssize_t)sizeof(cur))
+            return -1;
+        if (cur & 0x8000)
+            return pread(fd, val, sizeof(*val), VPD_DATA_OFF)
+                   == (ssize_t)sizeof(*val) ? 0 : -1;
+        usleep(500);
+    }
+    fprintf(stderr, "vpd read 0x%02x timed out\n", off);
+    return -1;
 }
 
 static int reg_write(int fd, uint32_t off, uint32_t val)
 {
-    ssize_t n = pwrite(fd, &val, sizeof(val), off);
-    return (n == (ssize_t)sizeof(val)) ? 0 : -1;
+    uint16_t addr = (uint16_t)(((ITCH_VPD_REG_BASE + off) & 0x7FFF) | 0x8000);
+
+    if (pwrite(fd, &val, sizeof(val), VPD_DATA_OFF) != (ssize_t)sizeof(val))
+        return -1;
+    return pwrite(fd, &addr, sizeof(addr), VPD_ADDR_OFF)
+           == (ssize_t)sizeof(addr) ? 0 : -1;
 }
 
 static void print_book(int fd)
 {
     uint32_t bpx = 0, bq = 0, apx = 0, aq = 0, st = 0;
-    reg_read(fd, ITCH_REG_BID_PX,  &bpx);
-    reg_read(fd, ITCH_REG_BID_QTY, &bq);
-    reg_read(fd, ITCH_REG_ASK_PX,  &apx);
-    reg_read(fd, ITCH_REG_ASK_QTY, &aq);
-    reg_read(fd, ITCH_REG_BOOK_STATUS, &st);
+    int rc = 0;
+    rc |= reg_read(fd, ITCH_REG_BID_PX,  &bpx);
+    rc |= reg_read(fd, ITCH_REG_BID_QTY, &bq);
+    rc |= reg_read(fd, ITCH_REG_ASK_PX,  &apx);
+    rc |= reg_read(fd, ITCH_REG_ASK_QTY, &aq);
+    rc |= reg_read(fd, ITCH_REG_BOOK_STATUS, &st);
+    if (rc) {
+        fprintf(stderr, "VPD register reads failed\n");
+        exit(2);
+    }
 
     printf("bid %.4f x %-8u   ask %.4f x %-8u   %s%s\n",
            (double)bpx / ITCH_PRICE_SCALE, bq,

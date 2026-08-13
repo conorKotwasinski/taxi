@@ -44,7 +44,8 @@ module fpga #
     // MAC configuration
     parameter logic CFG_LOW_LATENCY = 1'b1,
     parameter logic COMBINED_MAC_PCS = 1'b1,
-    parameter MAC_DATA_W = 64
+    parameter MAC_DATA_W = 64,
+    parameter logic ITCH_GEN_EN = 1'b0
 )
 (
     /*
@@ -819,7 +820,8 @@ fpga_core #(
     // MAC configuration
     .CFG_LOW_LATENCY(CFG_LOW_LATENCY),
     .COMBINED_MAC_PCS(COMBINED_MAC_PCS),
-    .MAC_DATA_W(MAC_DATA_W)
+    .MAC_DATA_W(MAC_DATA_W),
+    .ITCH_GEN_EN(ITCH_GEN_EN)
 )
 core_inst (
     /*

@@ -36,8 +36,9 @@ module itch_tap #
 );
 
     localparam USER_W = 1 + TS_W;
+    localparam DATA_W = axis_mon.DATA_W;
 
-    taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(USER_W)) axis_snoop();
+    taxi_axis_if #(.DATA_W(DATA_W), .USER_EN(1), .USER_W(USER_W)) axis_snoop();
 
     assign axis_snoop.tdata  = axis_mon.tdata;
     assign axis_snoop.tkeep  = axis_mon.tkeep;
@@ -49,7 +50,7 @@ module itch_tap #
 
     assign axis_snoop.tvalid = axis_mon.tvalid && axis_mon.tready;
 
-    taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(USER_W)) axis_fifo();
+    taxi_axis_if #(.DATA_W(DATA_W), .USER_EN(1), .USER_W(USER_W)) axis_fifo();
 
     wire fifo_ovf;
     assign fifo_overflow = fifo_ovf;
