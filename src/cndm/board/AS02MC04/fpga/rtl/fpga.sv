@@ -45,8 +45,8 @@ module fpga #
     parameter logic CFG_LOW_LATENCY = 1'b1,
     parameter logic COMBINED_MAC_PCS = 1'b1,
     parameter MAC_DATA_W = 64,
-    parameter logic ITCH_GEN_EN = 1'b0,
-    parameter logic ITCH_EMIT_EN = 1'b0
+    parameter logic ITCH_GEN_EN = 1'b1,
+    parameter logic ITCH_EMIT_EN = 1'b1
 )
 (
     /*

@@ -72,14 +72,17 @@ static void print_book(int fd)
     }
 
     unsigned lmin = lat_mm & 0xffff, lmax = (lat_mm >> 16) & 0xffff;
+    unsigned gen  = (st >> ITCH_ST_GEN_FRM_SHIFT)  & ITCH_ST_CNT_MASK;
+    unsigned emit = (st >> ITCH_ST_EMIT_FRM_SHIFT) & ITCH_ST_CNT_MASK;
     unsigned tmin = tlat_mm & 0xffff, tmax = (tlat_mm >> 16) & 0xffff;
     printf("bid %.4f x %-8u   ask %.4f x %-8u   "
-           "book(ns) last=%.0f %u-%u  tick2trig(ns) %u-%u   %s%s\n",
+           "book(ns) last=%.0f %u-%u  tick2trig(ns) %u-%u  gen=%u emit=%u  %s%s\n",
            (double)bpx / ITCH_PRICE_SCALE, bq,
            (double)apx / ITCH_PRICE_SCALE, aq,
            (lat_last & 0xffff) * ITCH_RXCLK_NS,
            (unsigned)(lmin * ITCH_RXCLK_NS), (unsigned)(lmax * ITCH_RXCLK_NS),
            (unsigned)(tmin * ITCH_RXCLK_NS), (unsigned)(tmax * ITCH_RXCLK_NS),
+           gen, emit,
            (st & ITCH_BOOK_STATUS_LADDER_OVF) ? "[ladder-ovf] " : "",
            (st & ITCH_BOOK_STATUS_FIFO_OVF)   ? "[fifo-ovf] "   : "");
 }

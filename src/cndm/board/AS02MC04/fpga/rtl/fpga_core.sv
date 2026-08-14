@@ -48,8 +48,8 @@ module fpga_core #
     parameter logic CFG_LOW_LATENCY = 1'b1,
     parameter logic COMBINED_MAC_PCS = 1'b1,
     parameter MAC_DATA_W = 64,
-    parameter logic ITCH_GEN_EN = 1'b0,
-    parameter logic ITCH_EMIT_EN = 1'b0
+    parameter logic ITCH_GEN_EN = 1'b1,
+    parameter logic ITCH_EMIT_EN = 1'b1
 )
 (
     /*
@@ -889,6 +889,41 @@ itch_tap_inst (
     .dbg_tlat_max(itch_tlat_max)
 );
 
+logic trig_tog_rx = 1'b0;
+always_ff @(posedge sfp_rx_clk[0]) begin
+    if (itch_trig_valid)
+        trig_tog_rx <= ~trig_tog_rx;
+    if (sfp_rx_rst[0])
+        trig_tog_rx <= 1'b0;
+end
+
+wire trig_tog_tx;
+taxi_sync_signal #(.WIDTH(1), .N(3)) sync_trig (
+    .clk(sfp_tx_clk[0]), .in(trig_tog_rx), .out(trig_tog_tx));
+logic trig_tog_tx_d = 1'b0;
+always_ff @(posedge sfp_tx_clk[0]) trig_tog_tx_d <= trig_tog_tx;
+wire trig_pulse = trig_tog_tx ^ trig_tog_tx_d;
+
+logic [9:0] emit_frm_cnt = '0;
+always_ff @(posedge sfp_tx_clk[0]) begin
+    if (axis_sfp_tx[0].tvalid && axis_sfp_tx[0].tready && axis_sfp_tx[0].tlast)
+        emit_frm_cnt <= emit_frm_cnt + 1;
+end
+
+logic [9:0] gen_frm_cnt = '0;
+always_ff @(posedge sfp_tx_clk[1]) begin
+    if (axis_sfp_tx[1].tvalid && axis_sfp_tx[1].tready && axis_sfp_tx[1].tlast)
+        gen_frm_cnt <= gen_frm_cnt + 1;
+end
+
+wire [9:0] emit_frm_pcie;
+wire [9:0] gen_frm_pcie;
+taxi_sync_signal #(.WIDTH(10), .N(3)) sync_efrm (
+    .clk(pcie_clk), .in(emit_frm_cnt), .out(emit_frm_pcie));
+taxi_sync_signal #(.WIDTH(10), .N(3)) sync_gfrm (
+    .clk(pcie_clk), .in(gen_frm_cnt), .out(gen_frm_pcie));
+
+
 for (genvar p = 0; p < 2; p = p + 1) begin : g_sfp_tx
     if (ITCH_GEN_EN && p == 1) begin : g_gen
         itch_frame_gen #(
@@ -901,15 +936,7 @@ for (genvar p = 0; p < 2; p = p + 1) begin : g_sfp_tx
         );
         assign axis_cndm_tx[1].tready = 1'b1;
     end else if (ITCH_EMIT_EN && p == 0) begin : g_emit
-     
-        wire trig_tx;
-        taxi_sync_signal #(.WIDTH(1), .N(3)) sync_trig (
-            .clk(sfp_tx_clk[0]), .in(itch_trig_valid), .out(trig_tx));
-        logic trig_tx_d;
-        always_ff @(posedge sfp_tx_clk[0]) trig_tx_d <= trig_tx;
-        wire trig_pulse = trig_tx & ~trig_tx_d;
-
-        itch_order_emit #(.NBEATS(8)) itch_order_emit_inst (
+        itch_order_emit itch_order_emit_inst (
             .clk(sfp_tx_clk[0]),
             .rst(sfp_tx_rst[0]),
             .trig(trig_pulse),
@@ -964,7 +991,7 @@ assign itch_user_regs[0] = itch_bid_px_pcie;
 assign itch_user_regs[1] = itch_bid_qty_pcie;
 assign itch_user_regs[2] = itch_ask_px_pcie;
 assign itch_user_regs[3] = itch_ask_qty_pcie;
-assign itch_user_regs[4] = {30'd0, itch_fifo_ovf_pcie, itch_ladder_ovf_pcie};
+assign itch_user_regs[4] = {10'd0, emit_frm_pcie, gen_frm_pcie, itch_fifo_ovf_pcie, itch_ladder_ovf_pcie};
 assign itch_user_regs[5] = itch_lat_pcie;
 assign itch_user_regs[6] = itch_lat2_pcie;
 

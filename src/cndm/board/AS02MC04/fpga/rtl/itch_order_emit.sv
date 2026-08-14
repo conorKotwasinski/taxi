@@ -1,12 +1,8 @@
-
 `resetall
 `timescale 1ns / 1ps
 `default_nettype none
 
-module itch_order_emit #
-(
-    parameter NBEATS = 8
-)
+module itch_order_emit
 (
     input  wire logic   clk,
     input  wire logic   rst,
@@ -16,26 +12,32 @@ module itch_order_emit #
     taxi_axis_if.src    m_axis_tx
 );
 
-    localparam CL_BEATS = $clog2(NBEATS);
+    localparam DATA_W      = m_axis_tx.DATA_W;
+    localparam BYTE_LANES  = DATA_W/8;
+    localparam FRAME_BYTES = 64;
+    localparam NBEATS      = FRAME_BYTES/BYTE_LANES;
+    localparam CL_BEATS    = $clog2(NBEATS);
 
-    logic              active_reg = 1'b0;
+    localparam [FRAME_BYTES*8-1:0] FRAME = {
+        64'h0000000000000000,
+        64'h0000000000000000,
+        64'h0000000000000000,
+        64'h0000000000000000,
+        64'h0000006400015000,
+        64'h0000000052445200,
+        64'h4f00000803000000,
+        64'h0002ffffffffffff
+    };
+
+    logic                active_reg = 1'b0;
     logic [CL_BEATS-1:0] beat_reg = '0;
 
-    logic [63:0] beat_data;
-    always_comb begin
-        case (beat_reg)
-            3'd0: beat_data = 64'h00000000_00000002;
-            3'd1: beat_data = 64'h4f000008_00000000;
-            3'd2: beat_data = 64'h00000000_5244_5200;
-            3'd3: beat_data = 64'h00000064_00015000;
-            3'd4: beat_data = 64'h00000000_00000000;
-            3'd5: beat_data = 64'h00000000_00000000;
-            3'd6: beat_data = 64'h00000000_00000000;
-            default: beat_data = 64'h00000000_00000000;
-        endcase
+    wire [DATA_W-1:0] beat_rom[NBEATS];
+    for (genvar i = 0; i < NBEATS; i = i + 1) begin : g_beat
+        assign beat_rom[i] = FRAME[i*DATA_W +: DATA_W];
     end
 
-    assign m_axis_tx.tdata  = beat_data;
+    assign m_axis_tx.tdata  = beat_rom[beat_reg];
     assign m_axis_tx.tkeep  = '1;
     assign m_axis_tx.tstrb  = '1;
     assign m_axis_tx.tlast  = active_reg && (beat_reg == CL_BEATS'(NBEATS-1));

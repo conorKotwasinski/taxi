@@ -23,6 +23,9 @@
 
 #define ITCH_BOOK_STATUS_LADDER_OVF  0x1u
 #define ITCH_BOOK_STATUS_FIFO_OVF    0x2u
+#define ITCH_ST_GEN_FRM_SHIFT        2
+#define ITCH_ST_EMIT_FRM_SHIFT       12
+#define ITCH_ST_CNT_MASK             0x3FFu
 #define ITCH_RING_STATUS_OVF         0x1u
 
 #define ITCH_PRICE_SCALE       10000
