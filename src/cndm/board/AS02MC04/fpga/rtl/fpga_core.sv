@@ -48,7 +48,8 @@ module fpga_core #
     parameter logic CFG_LOW_LATENCY = 1'b1,
     parameter logic COMBINED_MAC_PCS = 1'b1,
     parameter MAC_DATA_W = 64,
-    parameter logic ITCH_GEN_EN = 1'b0
+    parameter logic ITCH_GEN_EN = 1'b0,
+    parameter logic ITCH_EMIT_EN = 1'b0
 )
 (
     /*
@@ -178,7 +179,7 @@ module fpga_core #
 localparam logic PTP_TS_FMT_TOD = 1'b0;
 localparam PTP_TS_W = PTP_TS_FMT_TOD ? 96 : 48;
 
-wire [31:0] itch_user_regs [7];
+wire [31:0] itch_user_regs [8];
 wire [31:0] itch_user_ctrl [1];
 
 // flashing via PCIe VPD
@@ -204,7 +205,7 @@ pyrite_pcie_us_vpd_qspi #(
     .FLASH_SEG0_SIZE(32'h00000000),
     .FLASH_DATA_W(4),
     .FLASH_DUAL_QSPI(1'b0),
-    .USER_REG_CNT(7),
+    .USER_REG_CNT(8),
     .USER_CTRL_CNT(1),
     .USER_CTRL_RST('{32'd10000})
 )
@@ -846,6 +847,7 @@ cndm_inst (
 
 wire [31:0] itch_bid_px, itch_bid_qty, itch_ask_px, itch_ask_qty;
 wire [15:0] itch_lat_last, itch_lat_min, itch_lat_max;
+wire [15:0] itch_tlat_last, itch_tlat_min, itch_tlat_max;
 wire        itch_ladder_ovf, itch_fifo_ovf;
 wire        itch_trig_valid, itch_trig_side;
 wire [1:0]  itch_trig_sym;
@@ -881,7 +883,10 @@ itch_tap_inst (
     .dbg_ask_qty(itch_ask_qty),
     .dbg_lat_last(itch_lat_last),
     .dbg_lat_min(itch_lat_min),
-    .dbg_lat_max(itch_lat_max)
+    .dbg_lat_max(itch_lat_max),
+    .dbg_tlat_last(itch_tlat_last),
+    .dbg_tlat_min(itch_tlat_min),
+    .dbg_tlat_max(itch_tlat_max)
 );
 
 for (genvar p = 0; p < 2; p = p + 1) begin : g_sfp_tx
@@ -895,6 +900,22 @@ for (genvar p = 0; p < 2; p = p + 1) begin : g_sfp_tx
             .m_axis_tx(axis_sfp_tx[1])
         );
         assign axis_cndm_tx[1].tready = 1'b1;
+    end else if (ITCH_EMIT_EN && p == 0) begin : g_emit
+     
+        wire trig_tx;
+        taxi_sync_signal #(.WIDTH(1), .N(3)) sync_trig (
+            .clk(sfp_tx_clk[0]), .in(itch_trig_valid), .out(trig_tx));
+        logic trig_tx_d;
+        always_ff @(posedge sfp_tx_clk[0]) trig_tx_d <= trig_tx;
+        wire trig_pulse = trig_tx & ~trig_tx_d;
+
+        itch_order_emit #(.NBEATS(8)) itch_order_emit_inst (
+            .clk(sfp_tx_clk[0]),
+            .rst(sfp_tx_rst[0]),
+            .trig(trig_pulse),
+            .m_axis_tx(axis_sfp_tx[0])
+        );
+        assign axis_cndm_tx[0].tready = 1'b1;
     end else begin : g_cndm
         assign axis_sfp_tx[p].tdata   = axis_cndm_tx[p].tdata;
         assign axis_sfp_tx[p].tkeep   = axis_cndm_tx[p].tkeep;
@@ -946,6 +967,10 @@ assign itch_user_regs[3] = itch_ask_qty_pcie;
 assign itch_user_regs[4] = {30'd0, itch_fifo_ovf_pcie, itch_ladder_ovf_pcie};
 assign itch_user_regs[5] = itch_lat_pcie;
 assign itch_user_regs[6] = itch_lat2_pcie;
+
+wire [31:0] itch_tlat_pcie;
+taxi_sync_signal #(.WIDTH(32), .N(3)) sync_tlat  (.clk(pcie_clk), .in({itch_tlat_max, itch_tlat_min}), .out(itch_tlat_pcie));
+assign itch_user_regs[7] = itch_tlat_pcie;
 
 endmodule
 

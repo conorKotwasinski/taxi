@@ -26,6 +26,7 @@ VERILOG_SOURCES += $(COCOTB_TOPLEVEL).sv
 VERILOG_SOURCES += $(RTL_DIR)/$(DUT).sv
 VERILOG_SOURCES += $(RTL_DIR)/itch_tap.sv
 VERILOG_SOURCES += $(RTL_DIR)/itch_frame_gen.sv
+VERILOG_SOURCES += $(RTL_DIR)/itch_order_emit.sv
 VERILOG_SOURCES += $(RTL_DIR)/itch_decode.sv
 VERILOG_SOURCES += $(TAXI_SRC_DIR)/axis/rtl/taxi_axis_adapter.sv
 VERILOG_SOURCES += $(TAXI_SRC_DIR)/cndm/rtl/cndm_micro_pcie_us.f

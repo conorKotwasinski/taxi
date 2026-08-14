@@ -12,6 +12,7 @@
 #define ITCH_REG_BOOK_STATUS   0x70
 #define ITCH_REG_LAT_MINMAX    0x74   
 #define ITCH_REG_LAT_LAST      0x78   
+#define ITCH_REG_TLAT_MINMAX   0x7C
 
 #define ITCH_REG_THRESHOLD     0x80
 #define ITCH_REG_RING_BASE_LO  0x84

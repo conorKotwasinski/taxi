@@ -37,7 +37,10 @@ module itch_decode #
 
     output wire logic [15:0]                   dbg_lat_last,
     output wire logic [15:0]                   dbg_lat_min,
-    output wire logic [15:0]                   dbg_lat_max
+    output wire logic [15:0]                   dbg_lat_max,
+    output wire logic [15:0]                   dbg_tlat_last,
+    output wire logic [15:0]                   dbg_tlat_min,
+    output wire logic [15:0]                   dbg_tlat_max
 );
 
     localparam DATA_W   = s_axis_rx.DATA_W;
@@ -86,6 +89,7 @@ module itch_decode #
     logic [15:0] cyc_cnt;
     logic [15:0] t0_cyc;
     logic [15:0] lat_last, lat_min, lat_max;
+    logic [15:0] tlat_last, tlat_min, tlat_max;   // ingress -> trigger (tick-to-trade detect)
     logic              bad_reg,      bad_next;
     logic [15:0]       skip_reg,     skip_next;
     logic [1:0]        lencnt_reg,   lencnt_next;
@@ -230,6 +234,9 @@ module itch_decode #
     assign dbg_lat_last = lat_last;
     assign dbg_lat_min  = lat_min;
     assign dbg_lat_max  = lat_max;
+    assign dbg_tlat_last = tlat_last;
+    assign dbg_tlat_min  = tlat_min;
+    assign dbg_tlat_max  = tlat_max;
 
     logic overflow_reg;
     assign ladder_overflow = overflow_reg;
@@ -383,6 +390,12 @@ module itch_decode #
             end else begin
                 trig_side_reg  <= 1'b1;
                 trig_valid_reg <= (tsym_ask_q - tsym_bid_q) > cfg_imbalance_thresh;
+            end
+            if (((tsym_bid_q > tsym_ask_q) ? (tsym_bid_q - tsym_ask_q)
+                                           : (tsym_ask_q - tsym_bid_q)) > cfg_imbalance_thresh) begin
+                tlat_last <= cyc_cnt - t0_cyc;
+                if ((cyc_cnt - t0_cyc) < tlat_min) tlat_min <= cyc_cnt - t0_cyc;
+                if ((cyc_cnt - t0_cyc) > tlat_max) tlat_max <= cyc_cnt - t0_cyc;
             end
         end
         upd_pending_reg <= 1'b0;
@@ -683,6 +696,9 @@ module itch_decode #
             lat_last <= '0;
             lat_min  <= 16'hffff;
             lat_max  <= '0;
+            tlat_last <= '0;
+            tlat_min  <= 16'hffff;
+            tlat_max  <= '0;
             seq_reg         <= '0;
             delta_ovf_reg   <= 1'b0;
             for (int i = 0; i < LAD_N; i++)

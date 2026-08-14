@@ -62,7 +62,10 @@ uut (
     .dbg_ask_qty(dbg_ask_qty),
     .dbg_lat_last(),
     .dbg_lat_min(),
-    .dbg_lat_max()
+    .dbg_lat_max(),
+    .dbg_tlat_last(),
+    .dbg_tlat_min(),
+    .dbg_tlat_max()
 );
 
 endmodule
