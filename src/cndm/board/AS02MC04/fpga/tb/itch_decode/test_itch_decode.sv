@@ -38,6 +38,7 @@ logic [PRICE_W-1:0] dbg_bid_px;
 logic [QTY_W-1:0]   dbg_bid_qty;
 logic [PRICE_W-1:0] dbg_ask_px;
 logic [QTY_W-1:0]   dbg_ask_qty;
+logic [15:0]        dbg_lat_last, dbg_lat_min, dbg_lat_max;
 
 itch_decode #(
     .SYM_COUNT(SYM_COUNT),
@@ -67,7 +68,10 @@ uut (
     .dbg_bid_px(dbg_bid_px),
     .dbg_bid_qty(dbg_bid_qty),
     .dbg_ask_px(dbg_ask_px),
-    .dbg_ask_qty(dbg_ask_qty)
+    .dbg_ask_qty(dbg_ask_qty),
+    .dbg_lat_last(dbg_lat_last),
+    .dbg_lat_min(dbg_lat_min),
+    .dbg_lat_max(dbg_lat_max)
 );
 
 assign m_axis_delta.tready = 1'b1;

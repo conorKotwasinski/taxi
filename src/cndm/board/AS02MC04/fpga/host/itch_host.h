@@ -10,8 +10,8 @@
 #define ITCH_REG_ASK_PX        0x68
 #define ITCH_REG_ASK_QTY       0x6C
 #define ITCH_REG_BOOK_STATUS   0x70
-#define ITCH_REG_RING_PROD     0x74
-#define ITCH_REG_RING_STATUS   0x78
+#define ITCH_REG_LAT_MINMAX    0x74   
+#define ITCH_REG_LAT_LAST      0x78   
 
 #define ITCH_REG_THRESHOLD     0x80
 #define ITCH_REG_RING_BASE_LO  0x84
@@ -25,6 +25,8 @@
 #define ITCH_RING_STATUS_OVF         0x1u
 
 #define ITCH_PRICE_SCALE       10000
+
+#define ITCH_RXCLK_NS          3.103
 
 #pragma pack(push, 1)
 struct itch_delta {

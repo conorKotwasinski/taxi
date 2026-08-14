@@ -59,7 +59,10 @@ uut (
     .dbg_bid_px(dbg_bid_px),
     .dbg_bid_qty(dbg_bid_qty),
     .dbg_ask_px(dbg_ask_px),
-    .dbg_ask_qty(dbg_ask_qty)
+    .dbg_ask_qty(dbg_ask_qty),
+    .dbg_lat_last(),
+    .dbg_lat_min(),
+    .dbg_lat_max()
 );
 
 endmodule

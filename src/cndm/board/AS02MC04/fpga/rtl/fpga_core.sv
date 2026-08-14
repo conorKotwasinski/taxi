@@ -178,7 +178,7 @@ module fpga_core #
 localparam logic PTP_TS_FMT_TOD = 1'b0;
 localparam PTP_TS_W = PTP_TS_FMT_TOD ? 96 : 48;
 
-wire [31:0] itch_user_regs [5];
+wire [31:0] itch_user_regs [7];
 wire [31:0] itch_user_ctrl [1];
 
 // flashing via PCIe VPD
@@ -204,7 +204,7 @@ pyrite_pcie_us_vpd_qspi #(
     .FLASH_SEG0_SIZE(32'h00000000),
     .FLASH_DATA_W(4),
     .FLASH_DUAL_QSPI(1'b0),
-    .USER_REG_CNT(5),
+    .USER_REG_CNT(7),
     .USER_CTRL_CNT(1),
     .USER_CTRL_RST('{32'd10000})
 )
@@ -845,6 +845,7 @@ cndm_inst (
 );
 
 wire [31:0] itch_bid_px, itch_bid_qty, itch_ask_px, itch_ask_qty;
+wire [15:0] itch_lat_last, itch_lat_min, itch_lat_max;
 wire        itch_ladder_ovf, itch_fifo_ovf;
 wire        itch_trig_valid, itch_trig_side;
 wire [1:0]  itch_trig_sym;
@@ -877,7 +878,10 @@ itch_tap_inst (
     .dbg_bid_px(itch_bid_px),
     .dbg_bid_qty(itch_bid_qty),
     .dbg_ask_px(itch_ask_px),
-    .dbg_ask_qty(itch_ask_qty)
+    .dbg_ask_qty(itch_ask_qty),
+    .dbg_lat_last(itch_lat_last),
+    .dbg_lat_min(itch_lat_min),
+    .dbg_lat_max(itch_lat_max)
 );
 
 for (genvar p = 0; p < 2; p = p + 1) begin : g_sfp_tx
@@ -930,11 +934,18 @@ taxi_sync_signal #(.WIDTH(2), .N(3)) sync_ovf (
     .clk(pcie_clk), .in({itch_fifo_ovf, itch_ladder_ovf}),
     .out({itch_fifo_ovf_pcie, itch_ladder_ovf_pcie}));
 
+wire [31:0] itch_lat_pcie, itch_lat2_pcie;
+taxi_sync_signal #(.WIDTH(32), .N(3)) sync_lat  (.clk(pcie_clk), .in({itch_lat_max, itch_lat_min}), .out(itch_lat_pcie));
+taxi_sync_signal #(.WIDTH(16), .N(3)) sync_lat2 (.clk(pcie_clk), .in(itch_lat_last), .out(itch_lat2_pcie[15:0]));
+assign itch_lat2_pcie[31:16] = '0;
+
 assign itch_user_regs[0] = itch_bid_px_pcie;
 assign itch_user_regs[1] = itch_bid_qty_pcie;
 assign itch_user_regs[2] = itch_ask_px_pcie;
 assign itch_user_regs[3] = itch_ask_qty_pcie;
 assign itch_user_regs[4] = {30'd0, itch_fifo_ovf_pcie, itch_ladder_ovf_pcie};
+assign itch_user_regs[5] = itch_lat_pcie;
+assign itch_user_regs[6] = itch_lat2_pcie;
 
 endmodule
 

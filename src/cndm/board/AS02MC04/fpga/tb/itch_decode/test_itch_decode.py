@@ -243,6 +243,23 @@ async def run_test_delta_emit(dut):
         tb.log.info("%s: last-delta=%r golden=%r", name, got, exp)
         assert got == exp, f"{name}: delta {got} != golden {exp}"
 
+
+@cocotb.test()
+async def run_test_latency(dut):
+    tb = TB(dut)
+    await tb.reset()
+    stream = _stream_add_only()
+    await tb.send_stream(stream, ts=0x10)
+    for _ in range(50):
+        await RisingEdge(dut.clk)
+    last = int(dut.dbg_lat_last.value)
+    lmin = int(dut.dbg_lat_min.value)
+    lmax = int(dut.dbg_lat_max.value)
+    tb.log.info("wire-to-book latency (cycles): last=%d min=%d max=%d", last, lmin, lmax)
+    assert lmax > 0, "no latency measured"
+    assert lmin <= last <= lmax, "last outside [min,max]"
+    assert lmax < 4096, "latency implausibly large"
+
 tests_dir = os.path.abspath(os.path.dirname(__file__))
 rtl_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'rtl'))
 lib_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'lib'))

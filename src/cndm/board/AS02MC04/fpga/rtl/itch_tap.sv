@@ -32,7 +32,10 @@ module itch_tap #
     output wire logic [PRICE_W-1:0]            dbg_bid_px,
     output wire logic [QTY_W-1:0]              dbg_bid_qty,
     output wire logic [PRICE_W-1:0]            dbg_ask_px,
-    output wire logic [QTY_W-1:0]              dbg_ask_qty
+    output wire logic [QTY_W-1:0]              dbg_ask_qty,
+    output wire logic [15:0]                   dbg_lat_last,
+    output wire logic [15:0]                   dbg_lat_min,
+    output wire logic [15:0]                   dbg_lat_max
 );
 
     localparam USER_W = 1 + TS_W;
@@ -107,7 +110,10 @@ module itch_tap #
         .dbg_bid_px(dbg_bid_px),
         .dbg_bid_qty(dbg_bid_qty),
         .dbg_ask_px(dbg_ask_px),
-        .dbg_ask_qty(dbg_ask_qty)
+        .dbg_ask_qty(dbg_ask_qty),
+        .dbg_lat_last(dbg_lat_last),
+        .dbg_lat_min(dbg_lat_min),
+        .dbg_lat_max(dbg_lat_max)
     );
 
 endmodule

@@ -33,7 +33,11 @@ module itch_decode #
     output wire logic [PRICE_W-1:0]            dbg_bid_px,
     output wire logic [QTY_W-1:0]              dbg_bid_qty,
     output wire logic [PRICE_W-1:0]            dbg_ask_px,
-    output wire logic [QTY_W-1:0]              dbg_ask_qty
+    output wire logic [QTY_W-1:0]              dbg_ask_qty,
+
+    output wire logic [15:0]                   dbg_lat_last,
+    output wire logic [15:0]                   dbg_lat_min,
+    output wire logic [15:0]                   dbg_lat_max
 );
 
     localparam DATA_W   = s_axis_rx.DATA_W;
@@ -78,6 +82,10 @@ module itch_decode #
     state_t state_reg = STATE_IDLE, state_next;
 
     logic [TS_W-1:0]   ts_reg,       ts_next;
+
+    logic [15:0] cyc_cnt;
+    logic [15:0] t0_cyc;
+    logic [15:0] lat_last, lat_min, lat_max;
     logic              bad_reg,      bad_next;
     logic [15:0]       skip_reg,     skip_next;
     logic [1:0]        lencnt_reg,   lencnt_next;
@@ -219,6 +227,9 @@ module itch_decode #
     assign dbg_bid_qty = scan_bid_q;
     assign dbg_ask_px  = scan_ask_px;
     assign dbg_ask_qty = scan_ask_q;
+    assign dbg_lat_last = lat_last;
+    assign dbg_lat_min  = lat_min;
+    assign dbg_lat_max  = lat_max;
 
     logic overflow_reg;
     assign ladder_overflow = overflow_reg;
@@ -349,6 +360,8 @@ module itch_decode #
 
     always_ff @(posedge clk) begin
         state_reg      <= state_next;
+
+        cyc_cnt <= cyc_cnt + 16'd1;
         ts_reg         <= ts_next;
         bad_reg        <= bad_next;
         skip_reg       <= skip_next;
@@ -401,6 +414,9 @@ module itch_decode #
 
         if (beat && state_reg == STATE_MSG_BODY)
             msg_buf[bidx_reg] <= rx_b;
+
+        if (beat && state_reg == STATE_IDLE)
+            t0_cyc <= cyc_cnt;
 
         case (state_reg)
 
@@ -640,6 +656,9 @@ module itch_decode #
             tob_ask_q [upd_sym_reg] <= scan_aq;
             upd_pending_reg <= upd_valid_reg;
             rd_vld <= 1'b0;
+            lat_last <= cyc_cnt - t0_cyc;
+            if ((cyc_cnt - t0_cyc) < lat_min) lat_min <= cyc_cnt - t0_cyc;
+            if ((cyc_cnt - t0_cyc) > lat_max) lat_max <= cyc_cnt - t0_cyc;
         end
 
         default: ;
@@ -659,6 +678,11 @@ module itch_decode #
             scan_i          <= '0;
             emit_active_reg <= 1'b0;
             beat_idx_reg    <= 2'd0;
+            cyc_cnt  <= '0;
+            t0_cyc   <= '0;
+            lat_last <= '0;
+            lat_min  <= 16'hffff;
+            lat_max  <= '0;
             seq_reg         <= '0;
             delta_ovf_reg   <= 1'b0;
             for (int i = 0; i < LAD_N; i++)

@@ -56,20 +56,27 @@ static int reg_write(int fd, uint32_t off, uint32_t val)
 static void print_book(int fd)
 {
     uint32_t bpx = 0, bq = 0, apx = 0, aq = 0, st = 0;
+    uint32_t lat_mm = 0, lat_last = 0;
     int rc = 0;
     rc |= reg_read(fd, ITCH_REG_BID_PX,  &bpx);
     rc |= reg_read(fd, ITCH_REG_BID_QTY, &bq);
     rc |= reg_read(fd, ITCH_REG_ASK_PX,  &apx);
     rc |= reg_read(fd, ITCH_REG_ASK_QTY, &aq);
     rc |= reg_read(fd, ITCH_REG_BOOK_STATUS, &st);
+    rc |= reg_read(fd, ITCH_REG_LAT_MINMAX, &lat_mm);
+    rc |= reg_read(fd, ITCH_REG_LAT_LAST, &lat_last);
     if (rc) {
         fprintf(stderr, "VPD register reads failed\n");
         exit(2);
     }
 
-    printf("bid %.4f x %-8u   ask %.4f x %-8u   %s%s\n",
+    unsigned lmin = lat_mm & 0xffff, lmax = (lat_mm >> 16) & 0xffff;
+    printf("bid %.4f x %-8u   ask %.4f x %-8u   "
+           "lat(ns) last=%.1f min=%.1f max=%.1f   %s%s\n",
            (double)bpx / ITCH_PRICE_SCALE, bq,
            (double)apx / ITCH_PRICE_SCALE, aq,
+           (lat_last & 0xffff) * ITCH_RXCLK_NS,
+           lmin * ITCH_RXCLK_NS, lmax * ITCH_RXCLK_NS,
            (st & ITCH_BOOK_STATUS_LADDER_OVF) ? "[ladder-ovf] " : "",
            (st & ITCH_BOOK_STATUS_FIFO_OVF)   ? "[fifo-ovf] "   : "");
 }
