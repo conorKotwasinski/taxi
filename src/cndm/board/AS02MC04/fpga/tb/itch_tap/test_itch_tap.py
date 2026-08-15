@@ -115,6 +115,30 @@ async def run_test_tap_with_interfering_traffic(dut):
         tb.log.info("%s after junk: DUT=%r golden=%r", sym, tob, exp)
         assert tob == exp, f"{sym}: DUT {tob} != golden {exp} after junk frames"
 
+@cocotb.test()
+async def run_test_zero_length_padding(dut):
+    tb = TB(dut)
+    await tb.reset()
+
+    stream = _stream()
+    book = itch.build_book(stream, symbols=SYMBOLS)
+
+    padded = bytes(HDR_SKIP_BYTES) + stream + bytes(66)
+    for _ in range(8):
+        await RisingEdge(dut.clk)
+    for _ in range(3):
+        await tb.source.send(AxiStreamFrame(padded, tuser=0))
+        await tb.source.wait()
+        for _ in range(4000):
+            await RisingEdge(dut.clk)
+
+    for sym in ('AAPL', 'MSFT'):
+        tob = await tb.read_tob(SYM_ID[sym])
+        exp = itch.build_book(stream * 3, symbols=SYMBOLS).top_of_book(sym)
+        tb.log.info("%s with padded frames: DUT=%r golden=%r", sym, tob, exp)
+        assert tob == exp, f"{sym}: zero-length pad wedged the parser"
+
+
 tests_dir = os.path.abspath(os.path.dirname(__file__))
 rtl_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'rtl'))
 lib_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'lib'))

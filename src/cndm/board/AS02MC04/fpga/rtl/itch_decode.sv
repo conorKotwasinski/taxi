@@ -300,9 +300,13 @@ module itch_decode #
                 STATE_MSG_LEN: begin
                     msg_len_next = {msg_len_reg[7:0], rx_b};
                     if (lencnt_reg == 2'd1) begin
-                        msg_rem_next = {msg_len_reg[7:0], rx_b};
-                        bidx_next    = '0;
-                        state_next   = STATE_MSG_BODY;
+                        if ({msg_len_reg[7:0], rx_b} == 16'd0) begin
+                            state_next = STATE_DRAIN;
+                        end else begin
+                            msg_rem_next = {msg_len_reg[7:0], rx_b};
+                            bidx_next    = '0;
+                            state_next   = STATE_MSG_BODY;
+                        end
                     end else begin
                         lencnt_next = lencnt_reg - 1;
                     end
@@ -314,11 +318,17 @@ module itch_decode #
                     else
                         msg_rem_next = msg_rem_reg - 1;
                 end
+                STATE_DRAIN: begin
+                    state_next = STATE_DRAIN;
+                end
                 default: state_next = STATE_IDLE;
             endcase
 
-            if (s_axis_rx.tlast)
+            if (s_axis_rx.tlast) begin
                 frame_done_next = 1'b1;
+                if (state_next != STATE_DECODE)
+                    state_next = STATE_IDLE;
+            end
         end
 
         if (state_next == STATE_IDLE)

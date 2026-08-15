@@ -18,14 +18,27 @@ SYM_ID = {s: i for i, s in enumerate(SYMBOLS)}
 HDR_SKIP_BYTES = 14
 TS_W = 48
 
-GEN_MSGS = [
-    dict(ref=1, side='B', shares=100, stock='AAPL', price=1500000),
-    dict(ref=2, side='S', shares=200, stock='AAPL', price=1500100),
-    dict(ref=3, side='B', shares=300, stock='AAPL', price=1500000),
-]
+RTL_FRAME_GEN = os.path.join(os.path.dirname(__file__), '..', '..', 'rtl',
+                             'itch_frame_gen.sv')
+
+def rom_frame():
+    import re
+    s = open(RTL_FRAME_GEN).read()
+    m = re.search(r"localparam \[FRAME_BYTES\*8-1:0\] FRAME = \{(.*?)\};", s, re.S)
+    words = [int(x, 16) for x in re.findall(r"64'h([0-9a-fA-F]+)", m.group(1))]
+    words.reverse()
+    return b''.join(bytes([(w >> (8 * b)) & 0xFF for b in range(8)]) for w in words)
 
 def gen_stream():
-    return itch._framed(*[itch._mk('A', **m) for m in GEN_MSGS])
+    f = rom_frame()[HDR_SKIP_BYTES:]
+    off, out = 0, bytearray()
+    while off + 2 <= len(f):
+        ln = int.from_bytes(f[off:off + 2], 'big')
+        if ln == 0 or off + 2 + ln > len(f):
+            break
+        out += f[off:off + 2 + ln]
+        off += 2 + ln
+    return bytes(out)
 
 class TB:
     def __init__(self, dut):
@@ -76,12 +89,13 @@ async def run_test_frame_bytes(dut):
     await tb.reset()
 
     frame = await tb.capture_frame()
-    payload = gen_stream()
-    expected = bytes.fromhex('ffffffffffff') + bytes.fromhex('020000000002') \
-        + bytes.fromhex('0800') + payload
+    expected = rom_frame()
 
     tb.log.info("captured %d bytes: %s", len(frame), frame.hex())
-    assert len(frame) == 128, f"frame is {len(frame)} bytes, expected 128"
+    assert len(frame) == len(expected), \
+        f"frame is {len(frame)} bytes, expected {len(expected)}"
+    assert frame[0:6] == bytes.fromhex('ffffffffffff'), "dst is not broadcast"
+    assert frame[6:12] != bytes(6), "source MAC is all zeros"
     assert frame == expected, (
         f"frame mismatch\n got {frame.hex()}\nwant {expected.hex()}")
 
@@ -102,26 +116,23 @@ async def run_test_loopback_book(dut):
     book = itch.build_book(gen_stream(), symbols=SYMBOLS)
     exp = book.top_of_book('AAPL')
     tob = await tb.read_tob(SYM_ID['AAPL'])
-    tb.log.info("AAPL: DUT=%r golden=%r", tob, exp)
+    tb.log.info("AAPL after 1 replay: DUT=%r golden=%r", tob, exp)
     assert tob == exp, f"AAPL: DUT {tob} != golden {exp}"
 
-    assert tob == (1500000, 400, 1500100, 200), f"unexpected book {tob}"
-
 @cocotb.test()
-async def run_test_repeat_accumulates(dut):
+async def run_test_replays_match_golden(dut):
     tb = TB(dut)
     await tb.reset()
 
-    seen = []
-    for _ in range(3):
+    stream = gen_stream()
+    for n in range(1, 4):
         await tb.capture_frame()
         for _ in range(1500):
             await RisingEdge(dut.clk)
-        seen.append(await tb.read_tob(SYM_ID['AAPL']))
-
-    tb.log.info("book after each frame: %r", seen)
-    assert [b[1] for b in seen] == [400, 800, 1200], f"bid qty {seen}"
-    assert [b[3] for b in seen] == [200, 400, 600], f"ask qty {seen}"
+        tob = await tb.read_tob(SYM_ID['AAPL'])
+        exp = itch.build_book(stream * n, symbols=SYMBOLS).top_of_book('AAPL')
+        tb.log.info("AAPL after %d replays: DUT=%r golden=%r", n, tob, exp)
+        assert tob == exp, f"after {n} replays: DUT {tob} != golden {exp}"
 
 tests_dir = os.path.abspath(os.path.dirname(__file__))
 rtl_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'rtl'))
