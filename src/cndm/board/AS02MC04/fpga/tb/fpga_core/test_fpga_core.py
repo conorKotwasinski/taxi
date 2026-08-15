@@ -30,12 +30,14 @@ from cocotbext.pcie.xilinx.us import UltraScalePlusPcieDevice
 try:
     from baser import BaseRSerdesSource, BaseRSerdesSink
     import cndm
+    import itch as cndm_itch
 except ImportError:
     # attempt import from current directory
     sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
     try:
         from baser import BaseRSerdesSource, BaseRSerdesSink
         import cndm
+        import itch as cndm_itch
     finally:
         del sys.path[0]
 
@@ -500,6 +502,96 @@ async def run_test(dut):
     tb.loopback_enable = False
 
     await RisingEdge(dut.clk_125mhz)
+    await RisingEdge(dut.clk_125mhz)
+
+
+@cocotb.test()
+async def run_test_delta_ring_backdoor_cfg(dut):
+    tb = TB(dut)
+    await tb.init()
+
+    driver = cndm.Driver()
+    await driver.init_pcie_dev(tb.rc.find_device(tb.dev.functions[0].pcie_id))
+
+    for k in range(1200):
+        await RisingEdge(tb.dut.clk_125mhz)
+
+    REC_BYTES = 32
+    RING_ENTRIES = 64
+    region = driver.pool.alloc_region(RING_ENTRIES * REC_BYTES)
+    ring_base = region.get_absolute_address(0)
+
+    tb.dut.uut.pyrite_inst.user_ctrl_reg[1].value = ring_base & 0xffffffff
+    tb.dut.uut.pyrite_inst.user_ctrl_reg[2].value = (ring_base >> 32) & 0xffffffff
+    tb.dut.uut.pyrite_inst.user_ctrl_reg[3].value = 1
+
+    for k in range(200):
+        await RisingEdge(tb.dut.clk_125mhz)
+
+    mk = cndm_itch._mk
+    framed = cndm_itch._framed
+    stream = framed(
+        mk('A', ref=1, side='B', shares=100, stock='AAPL', price=1500000),
+        mk('A', ref=2, side='B', shares=200, stock='AAPL', price=1499900),
+        mk('A', ref=3, side='S', shares=150, stock='AAPL', price=1500100),
+        mk('A', ref=4, side='B', shares=400, stock='AAPL', price=1500000),
+        mk('A', ref=5, side='S', shares=250, stock='MSFT', price=4200100),
+        mk('E', ref=1, shares=40),
+        mk('D', ref=3),
+    )
+    book = cndm_itch.build_book(stream, symbols=['AAPL', 'MSFT', 'NVDA', 'AMZN'])
+
+    l2 = bytes(6) + bytes([2, 0, 0, 0, 0, 2]) + b'\x88\xb5'
+    frame = bytearray(l2 + stream)
+    frame += bytes(max(0, 60 - len(frame)))
+    await tb.sfp_sources[0].send(XgmiiFrame.from_payload(bytes(frame)))
+
+    for k in range(4000):
+        await RisingEdge(tb.dut.clk_125mhz)
+
+    dut_bid = (int(tb.dut.uut.itch_bid_px_pcie.value),
+               int(tb.dut.uut.itch_bid_qty_pcie.value))
+    exp_bid = book.top_of_book('AAPL')[0:2]
+    tb.log.info("decoder AAPL bid: dut=%r golden=%r", dut_bid, exp_bid)
+    assert dut_bid == exp_bid, \
+        f"decoder never saw the frame: bid {dut_bid} != golden {exp_bid}"
+
+    SYM_ID = {'AAPL': 0, 'MSFT': 1, 'NVDA': 2, 'AMZN': 3}
+    mem = bytes(region.mem)
+    records = []
+    prev_seq = -1
+    for i in range(RING_ENTRIES):
+        rec = mem[i*REC_BYTES:(i+1)*REC_BYTES]
+        if rec == bytes(REC_BYTES):
+            continue
+        records.append(rec)
+
+    tb.log.info("delta records in host ring: %d", len(records))
+    assert records, "no delta records reached host memory"
+
+    last_by_sym = {}
+    for rec in records:
+        bid_px, ask_px = struct.unpack_from('<II', rec, 8)
+        bid_q,  ask_q  = struct.unpack_from('<II', rec, 16)
+        sym, flags, seq = struct.unpack_from('<HHI', rec, 24)
+        assert seq == prev_seq + 1, f"seq not monotonic: {seq} after {prev_seq}"
+        prev_seq = seq
+        last_by_sym[sym] = (bid_px, bid_q, ask_px, ask_q)
+
+    for name in ('AAPL', 'MSFT'):
+        exp = book.top_of_book(name)
+        got = last_by_sym.get(SYM_ID[name])
+        tb.log.info("%s: last-delta=%r golden=%r", name, got, exp)
+        assert got == exp, f"{name}: delta {got} != golden {exp}"
+
+    try:
+        prod_ptr = int(tb.dut.uut.itch_delta_dma_inst.prod_ptr.value)
+    except AttributeError:
+        prod_ptr = None
+    if prod_ptr is not None:
+        assert prod_ptr == len(records), \
+            f"prod_ptr {prod_ptr} != records {len(records)}"
+
     await RisingEdge(dut.clk_125mhz)
 
 

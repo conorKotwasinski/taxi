@@ -49,7 +49,10 @@ module test_fpga_core #
     // MAC configuration
     parameter logic CFG_LOW_LATENCY = 1'b1,
     parameter logic COMBINED_MAC_PCS = 1'b1,
-    parameter MAC_DATA_W = 64
+    parameter MAC_DATA_W = 64,
+
+    parameter logic ITCH_GEN_EN = 1'b0,
+    parameter logic ITCH_EMIT_EN = 1'b0
     /* verilator lint_on WIDTHTRUNC */
 )
 ();
@@ -187,6 +190,8 @@ fpga_core #(
     .SIM(SIM),
     .VENDOR(VENDOR),
     .FAMILY(FAMILY),
+    .ITCH_GEN_EN(ITCH_GEN_EN),
+    .ITCH_EMIT_EN(ITCH_EMIT_EN),
 
     // FW ID
     .FPGA_ID(FPGA_ID),

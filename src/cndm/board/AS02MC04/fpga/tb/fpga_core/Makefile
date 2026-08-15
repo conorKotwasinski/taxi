@@ -60,6 +60,9 @@ export PARAM_CFG_LOW_LATENCY := 1
 export PARAM_COMBINED_MAC_PCS := 1
 export PARAM_MAC_DATA_W := "64"
 
+export PARAM_ITCH_GEN_EN ?= "1'b0"
+export PARAM_ITCH_EMIT_EN ?= "1'b0"
+
 ifeq ($(SIM), icarus)
 	PLUSARGS += -fst
 

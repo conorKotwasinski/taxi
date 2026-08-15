@@ -180,7 +180,9 @@ localparam logic PTP_TS_FMT_TOD = 1'b0;
 localparam PTP_TS_W = PTP_TS_FMT_TOD ? 96 : 48;
 
 wire [31:0] itch_user_regs [8];
-wire [31:0] itch_user_ctrl [1];
+wire [31:0] itch_user_ctrl [4];
+
+localparam logic [31:0] ITCH_USER_CTRL_RST [4] = '{32'd10000, 32'd0, 32'd0, 32'd0};
 
 // flashing via PCIe VPD
 pyrite_pcie_us_vpd_qspi #(
@@ -206,8 +208,8 @@ pyrite_pcie_us_vpd_qspi #(
     .FLASH_DATA_W(4),
     .FLASH_DUAL_QSPI(1'b0),
     .USER_REG_CNT(8),
-    .USER_CTRL_CNT(1),
-    .USER_CTRL_RST('{32'd10000})
+    .USER_CTRL_CNT(4),
+    .USER_CTRL_RST(ITCH_USER_CTRL_RST)
 )
 pyrite_inst (
     .clk(pcie_clk),
