@@ -32,22 +32,7 @@
 
 #define ITCH_RXCLK_NS          3.103
 
-#pragma pack(push, 1)
-struct itch_delta {
-    uint64_t ts_ns;
-    uint32_t bid_px;
-    uint32_t ask_px;
-    uint32_t bid_qty;
-    uint32_t ask_qty;
-    uint16_t sym;
-    uint16_t flags;
-    uint32_t seq;
-};
-#pragma pack(pop)
-
 #define ITCH_REC_BYTES  32
-_Static_assert(sizeof(struct itch_delta) == ITCH_REC_BYTES,
-               "itch_delta must be exactly 32 bytes");
 
 #define ITCH_RING_ENTRIES  4096
 

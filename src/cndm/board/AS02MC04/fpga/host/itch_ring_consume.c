@@ -40,7 +40,6 @@ int main(int argc, char **argv) {
     struct itch_ring_consumer c;
     itch_ring_init(&c, base, entries);
 
-    struct { uint32_t bid_px, bid_qty, ask_px, ask_qty; } top[4] = {{0}};
     struct itch_delta_rec r;
     uint64_t idle = 0;
 
@@ -48,12 +47,6 @@ int main(int argc, char **argv) {
         int st = itch_ring_poll(&c, &r);
         if (st == ITCH_RING_FRESH) {
             idle = 0;
-            if (r.sym < 4) {
-                top[r.sym].bid_px = r.bid_px;
-                top[r.sym].bid_qty = r.bid_qty;
-                top[r.sym].ask_px = r.ask_px;
-                top[r.sym].ask_qty = r.ask_qty;
-            }
             printf("seq %-8u %-4s bid %.4f x %-8u ask %.4f x %-8u\n",
                    r.seq, sym_name(r.sym),
                    (double)r.bid_px / ITCH_PRICE_SCALE, r.bid_qty,

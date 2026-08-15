@@ -145,56 +145,17 @@ static int ring_configure(int fd, uint64_t base, int enable)
     return 0;
 }
 
-static void ring_consume(volatile struct itch_delta *ring, uint32_t entries,
-                         uint64_t max_records)
-{
-    uint32_t rd = 0;
-    uint32_t expect_seq = 0;
-    uint64_t got = 0;
-
-    while (got < max_records) {
-        volatile struct itch_delta *r = &ring[rd];
-        uint32_t seq = r->seq;
-
-        if (seq != expect_seq) {
-            if (seq > expect_seq) {
-
-                fprintf(stderr, "ring: dropped %u records (seq jump %u->%u)\n",
-                        seq - expect_seq, expect_seq, seq);
-                expect_seq = seq;
-            } else {
-
-                continue;
-            }
-        }
-
-        struct itch_delta rec;
-        memcpy(&rec, (const void *)r, sizeof(rec));
-
-        printf("[%u] sym=%u bid %.4f x %u  ask %.4f x %u  ts=%llu%s%s\n",
-               rec.seq, rec.sym,
-               (double)rec.bid_px / ITCH_PRICE_SCALE, rec.bid_qty,
-               (double)rec.ask_px / ITCH_PRICE_SCALE, rec.ask_qty,
-               (unsigned long long)rec.ts_ns,
-               (rec.flags & 1) ? " [no-bid]" : "",
-               (rec.flags & 2) ? " [no-ask]" : "");
-
-        got++;
-        expect_seq++;
-        rd = (rd + 1u) % entries;
-    }
-}
-
 static void usage(const char *p)
 {
     fprintf(stderr,
-        "usage: %s <pci-bdf> [--threshold N] [--ring] [--count N]\n"
+        "usage: %s <pci-bdf> [--threshold N] [--count N]\n"
         "       %s <pci-bdf> --ring-base ADDR [--ring-disable]\n"
         "       %s <pci-bdf> --ring-status\n"
         "\n"
         "ADDR is the device-visible DMA address of the ring buffer, as\n"
         "returned by dma_alloc_coherent in the driver. With an IOMMU active\n"
-        "this is an IOVA, not a physical address.\n", p, p, p);
+        "this is an IOVA, not a physical address.\n"
+        "To read records out of the ring, use itch_ring_consume.\n", p, p, p);
 }
 
 int main(int argc, char **argv)
@@ -203,7 +164,6 @@ int main(int argc, char **argv)
     const char *bdf = argv[1];
 
     long threshold = -1;
-    int ring_mode = 0;
     uint64_t count = 16;
     int have_ring_base = 0, ring_disable = 0, show_ring_status = 0;
     uint64_t ring_base = 0;
@@ -211,8 +171,6 @@ int main(int argc, char **argv)
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--threshold") && i + 1 < argc)
             threshold = strtol(argv[++i], NULL, 0);
-        else if (!strcmp(argv[i], "--ring"))
-            ring_mode = 1;
         else if (!strcmp(argv[i], "--count") && i + 1 < argc)
             count = strtoull(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--ring-base") && i + 1 < argc) {
@@ -272,32 +230,19 @@ int main(int argc, char **argv)
         printf("ring base 0x%016llx  ctrl 0x%08x  %s\n",
                (unsigned long long)base, ctrl,
                (ctrl & ITCH_RING_CTRL_ENABLE) ? "enabled" : "disabled");
-        if (!ring_mode) {
-            close(fd);
-            return 0;
-        }
-    }
-
-    if (have_ring_base && !ring_mode) {
         close(fd);
         return 0;
     }
 
-    if (!ring_mode) {
-
-        for (uint64_t i = 0; i < count; i++) {
-            print_book(fd);
-            usleep(100000);
-        }
+    if (have_ring_base) {
         close(fd);
         return 0;
     }
 
-    fprintf(stderr,
-        "ring mode requires the DMA delta ring (step 2b-2) and a driver-\n"
-        "allocated coherent buffer; see the sequence in the source. The\n"
-        "ring_consume() reader is ready for that buffer.\n");
-    (void)ring_consume;
+    for (uint64_t i = 0; i < count; i++) {
+        print_book(fd);
+        usleep(100000);
+    }
     close(fd);
     return 0;
 }
