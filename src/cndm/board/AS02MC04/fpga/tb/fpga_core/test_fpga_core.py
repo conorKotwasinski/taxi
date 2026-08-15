@@ -558,6 +558,11 @@ async def run_test_delta_ring_backdoor_cfg(dut):
 
     SYM_ID = {'AAPL': 0, 'MSFT': 1, 'NVDA': 2, 'AMZN': 3}
     mem = bytes(region.mem)
+    dump = os.environ.get('ITCH_RING_DUMP')
+    if dump:
+        with open(dump, 'wb') as f:
+            f.write(mem)
+        tb.log.info("wrote ring image to %s (%d bytes)", dump, len(mem))
     records = []
     prev_seq = -1
     for i in range(RING_ENTRIES):
@@ -573,7 +578,13 @@ async def run_test_delta_ring_backdoor_cfg(dut):
     for rec in records:
         bid_px, ask_px = struct.unpack_from('<II', rec, 8)
         bid_q,  ask_q  = struct.unpack_from('<II', rec, 16)
-        sym, flags, seq = struct.unpack_from('<HHI', rec, 24)
+        sym, pad, flags, seq = struct.unpack_from('<HBBI', rec, 24)
+        assert pad == 0, f"byte 26 is reserved padding, got {pad:#x}"
+        assert flags & 0x04, f"valid bit not set in flags {flags:#x}"
+        assert (flags & 0x01) == (bid_q == 0), \
+            f"bid-empty flag {flags:#x} disagrees with bid_qty {bid_q}"
+        assert (flags & 0x02) == ((ask_q == 0) << 1), \
+            f"ask-empty flag {flags:#x} disagrees with ask_qty {ask_q}"
         assert seq == prev_seq + 1, f"seq not monotonic: {seq} after {prev_seq}"
         prev_seq = seq
         last_by_sym[sym] = (bid_px, bid_q, ask_px, ask_q)
@@ -584,13 +595,9 @@ async def run_test_delta_ring_backdoor_cfg(dut):
         tb.log.info("%s: last-delta=%r golden=%r", name, got, exp)
         assert got == exp, f"{name}: delta {got} != golden {exp}"
 
-    try:
-        prod_ptr = int(tb.dut.uut.itch_delta_dma_inst.prod_ptr.value)
-    except AttributeError:
-        prod_ptr = None
-    if prod_ptr is not None:
-        assert prod_ptr == len(records), \
-            f"prod_ptr {prod_ptr} != records {len(records)}"
+    prod_ptr = int(tb.dut.uut.cndm_inst.core_inst.g_rec_dma.itch_delta_dma_inst.prod_ptr.value)
+    assert prod_ptr == len(records), \
+        f"prod_ptr {prod_ptr} != records {len(records)}"
 
     await RisingEdge(dut.clk_125mhz)
 

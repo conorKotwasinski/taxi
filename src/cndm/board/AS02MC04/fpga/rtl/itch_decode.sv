@@ -418,7 +418,7 @@ module itch_decode #
                 seq_reg         <= seq_reg + 1;
                 snap_ts_reg     <= ts_reg;
                 snap_sym_reg    <= upd_sym_reg;
-                snap_flags_reg  <= {6'd0, tsym_ask_q == 0, tsym_bid_q == 0};
+                snap_flags_reg  <= {5'd0, 1'b1, tsym_ask_q == 0, tsym_bid_q == 0};
                 snap_bidpx_reg  <= tsym_bid_px;
                 snap_bidq_reg   <= tsym_bid_q;
                 snap_askpx_reg  <= tsym_ask_px;

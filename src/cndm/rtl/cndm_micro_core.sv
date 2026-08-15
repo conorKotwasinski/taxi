@@ -35,6 +35,7 @@ module cndm_micro_core #(
 
     // Structural configuration
     parameter PORTS = 2,
+    parameter EXTRA_DMA_PORTS = 0,
     parameter logic BRD_CTRL_EN = 1'b0,
     parameter SYS_CLK_PER_NS_NUM = 4,
     parameter SYS_CLK_PER_NS_DEN = 1,
@@ -108,10 +109,17 @@ module cndm_micro_core #(
 
     input  wire logic              mac_rx_clk[PORTS],
     input  wire logic              mac_rx_rst[PORTS],
-    taxi_axis_if.snk               mac_axis_rx[PORTS]
+    taxi_axis_if.snk               mac_axis_rx[PORTS],
+
+    taxi_axis_if.snk               s_axis_rec,
+    input  wire logic [63:0]       rec_ring_base = '0,
+    input  wire logic              rec_ring_enable = 1'b0,
+    output wire logic [31:0]       rec_prod_ptr,
+    output wire logic              rec_ring_overflow
 );
 
-localparam CL_PORTS = $clog2(PORTS);
+localparam DMA_PORTS = PORTS + EXTRA_DMA_PORTS;
+localparam CL_PORTS = $clog2(DMA_PORTS);
 
 localparam AXIL_ADDR_W = s_axil_ctrl_wr.ADDR_W;
 localparam AXIL_DATA_W = s_axil_ctrl_wr.DATA_W;
@@ -475,7 +483,7 @@ taxi_dma_desc_if #(
     .ID_EN(dma_rd_desc_req.ID_EN),
     .DEST_EN(dma_rd_desc_req.DEST_EN),
     .USER_EN(dma_rd_desc_req.USER_EN)
-) dma_rd_desc_int[PORTS]();
+) dma_rd_desc_int[DMA_PORTS]();
 
 taxi_dma_desc_if #(
     .SRC_ADDR_W(dma_wr_desc_req.SRC_ADDR_W),
@@ -493,7 +501,7 @@ taxi_dma_desc_if #(
     .ID_EN(dma_wr_desc_req.ID_EN),
     .DEST_EN(dma_wr_desc_req.DEST_EN),
     .USER_EN(dma_wr_desc_req.USER_EN)
-) dma_wr_desc_int[PORTS]();
+) dma_wr_desc_int[DMA_PORTS]();
 
 taxi_dma_ram_if #(
     .SEGS(RAM_SEGS),
@@ -501,10 +509,10 @@ taxi_dma_ram_if #(
     .SEG_DATA_W(RAM_SEG_DATA_W),
     .SEG_BE_W(RAM_SEG_BE_W),
     .SEL_W(RAM_SEL_W-CL_PORTS)
-) dma_ram_int[PORTS]();
+) dma_ram_int[DMA_PORTS]();
 
 taxi_dma_if_mux #(
-    .PORTS(PORTS),
+    .PORTS(DMA_PORTS),
     .ARB_ROUND_ROBIN(1),
     .ARB_LSB_HIGH_PRIO(1)
 )
@@ -540,6 +548,57 @@ dma_mux_inst (
     .client_ram_wr(dma_ram_int),
     .client_ram_rd(dma_ram_int)
 );
+
+if (EXTRA_DMA_PORTS > 0) begin : g_rec_dma
+    localparam e = PORTS;
+
+    assign dma_rd_desc_int[e].req_src_addr = '0;
+    assign dma_rd_desc_int[e].req_dst_addr = '0;
+    assign dma_rd_desc_int[e].req_len      = '0;
+    assign dma_rd_desc_int[e].req_tag      = '0;
+    assign dma_rd_desc_int[e].req_src_sel  = '0;
+    assign dma_rd_desc_int[e].req_src_asid = '0;
+    assign dma_rd_desc_int[e].req_dst_sel  = '0;
+    assign dma_rd_desc_int[e].req_dst_asid = '0;
+    assign dma_rd_desc_int[e].req_imm      = '0;
+    assign dma_rd_desc_int[e].req_imm_en   = '0;
+    assign dma_rd_desc_int[e].req_id       = '0;
+    assign dma_rd_desc_int[e].req_dest     = '0;
+    assign dma_rd_desc_int[e].req_user     = '0;
+    assign dma_rd_desc_int[e].req_valid    = 1'b0;
+
+    assign dma_ram_int[e].wr_cmd_ready  = '1;
+    assign dma_ram_int[e].wr_done       = '0;
+
+    cndm_axis_rec_dma #(
+        .REC_BYTES(32),
+        .RING_ENTRIES(4096),
+        .ADDR_W(64),
+        .LEN_W(dma_wr_desc_int[e].LEN_W),
+        .TAG_W(dma_wr_desc_int[e].TAG_W),
+        .RAM_SEGS(RAM_SEGS),
+        .RAM_SEG_ADDR_W(RAM_SEG_ADDR_W),
+        .RAM_SEG_DATA_W(RAM_SEG_DATA_W),
+        .RAM_SEG_BE_W(RAM_SEG_BE_W),
+        .RAM_SEL_W(RAM_SEL_W-CL_PORTS)
+    )
+    itch_delta_dma_inst (
+        .clk(clk),
+        .rst(rst),
+        .s_axis_rec(s_axis_rec),
+        .m_host_desc_req(dma_wr_desc_int[e]),
+        .s_host_desc_sts(dma_wr_desc_int[e]),
+        .dma_ram_rd(dma_ram_int[e]),
+        .cfg_ring_base(rec_ring_base),
+        .cfg_ring_enable(rec_ring_enable),
+        .prod_ptr(rec_prod_ptr),
+        .ring_overflow(rec_ring_overflow)
+    );
+end else begin : g_no_rec_dma
+    assign s_axis_rec.tready = 1'b1;
+    assign rec_prod_ptr = '0;
+    assign rec_ring_overflow = 1'b0;
+end
 
 taxi_axis_if #(
     .DATA_W(m_axis_irq.DATA_W),

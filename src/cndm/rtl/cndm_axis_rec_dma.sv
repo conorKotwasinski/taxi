@@ -2,7 +2,7 @@
 `timescale 1ns / 1ps
 `default_nettype none
 
-module itch_delta_dma #
+module cndm_axis_rec_dma #
 (
     parameter REC_BYTES     = 32,
     parameter RING_ENTRIES  = 4096,
@@ -20,7 +20,7 @@ module itch_delta_dma #
     input  wire logic              clk,
     input  wire logic              rst,
 
-    taxi_axis_if.snk               s_axis_delta,
+    taxi_axis_if.snk               s_axis_rec,
 
     taxi_dma_desc_if.req_src       m_host_desc_req,
     taxi_dma_desc_if.sts_snk       s_host_desc_sts,
@@ -53,7 +53,7 @@ module itch_delta_dma #
 
     taxi_dma_desc_if #(
         .SRC_ADDR_W(RAM_ADDR_W), .DST_ADDR_W(RAM_ADDR_W),
-        .LEN_W(16), .TAG_W(1), .USER_EN(1), .USER_W(s_axis_delta.USER_W)
+        .LEN_W(16), .TAG_W(1), .USER_EN(1), .USER_W(s_axis_rec.USER_W)
     ) ram_desc();
 
     taxi_dma_client_axis_sink
@@ -61,7 +61,7 @@ module itch_delta_dma #
         .clk(clk), .rst(rst),
         .desc_req(ram_desc),
         .desc_sts(ram_desc),
-        .s_axis_wr_data(s_axis_delta),
+        .s_axis_wr_data(s_axis_rec),
         .dma_ram_wr(ram_wr),
         .enable(1'b1),
         .abort(1'b0)

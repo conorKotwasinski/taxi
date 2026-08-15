@@ -28,6 +28,9 @@ logic rst;
 taxi_axis_if #(.DATA_W(DATA_W), .USER_EN(1), .USER_W(USER_W)) axis_loop();
 assign axis_loop.tready = 1'b1;
 
+taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(1)) axis_delta();
+assign axis_delta.tready = 1'b1;
+
 logic               ladder_overflow;
 logic               fifo_overflow;
 
@@ -60,6 +63,7 @@ uut (
     .clk(clk),
     .rst(rst),
     .axis_mon(axis_loop),
+    .m_axis_delta(axis_delta),
     .ladder_overflow(ladder_overflow),
     .fifo_overflow(fifo_overflow),
     .cfg_imbalance_thresh('0),

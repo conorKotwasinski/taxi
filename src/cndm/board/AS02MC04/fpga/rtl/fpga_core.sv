@@ -723,6 +723,11 @@ sfp_mac_inst (
     .cfg_rx_pfc_en('{2{1'b0}})
 );
 
+wire [31:0] itch_rec_prod_ptr;
+wire        itch_rec_ring_ovf;
+taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(1)) axis_delta_rx();
+taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(1)) axis_delta_pcie();
+
 cndm_micro_pcie_us #(
     .SIM(SIM),
     .VENDOR(VENDOR),
@@ -740,6 +745,7 @@ cndm_micro_pcie_us #(
 
     // Structural configuration
     .PORTS($size(axis_sfp_tx)),
+    .EXTRA_DMA_PORTS(1),
     .BRD_CTRL_EN(1'b1),
     .SYS_CLK_PER_NS_NUM(4),
     .SYS_CLK_PER_NS_DEN(1),
@@ -844,7 +850,39 @@ cndm_inst (
 
     .mac_rx_clk(sfp_rx_clk),
     .mac_rx_rst(sfp_rx_rst),
-    .mac_axis_rx(axis_sfp_rx)
+    .mac_axis_rx(axis_sfp_rx),
+
+    .s_axis_rec(axis_delta_pcie),
+    .rec_ring_base({itch_user_ctrl[2], itch_user_ctrl[1]}),
+    .rec_ring_enable(itch_user_ctrl[3][0]),
+    .rec_prod_ptr(itch_rec_prod_ptr),
+    .rec_ring_overflow(itch_rec_ring_ovf)
+);
+
+taxi_axis_async_fifo #(
+    .DEPTH(64)
+)
+delta_cdc_inst (
+    .s_clk(sfp_rx_clk[0]),
+    .s_rst(sfp_rx_rst[0]),
+    .s_axis(axis_delta_rx),
+    .m_clk(pcie_clk),
+    .m_rst(pcie_rst),
+    .m_axis(axis_delta_pcie),
+    .s_pause_req(1'b0),
+    .s_pause_ack(),
+    .m_pause_req(1'b0),
+    .m_pause_ack(),
+    .s_status_depth(),
+    .s_status_depth_commit(),
+    .s_status_overflow(),
+    .s_status_bad_frame(),
+    .s_status_good_frame(),
+    .m_status_depth(),
+    .m_status_depth_commit(),
+    .m_status_overflow(),
+    .m_status_bad_frame(),
+    .m_status_good_frame()
 );
 
 wire [31:0] itch_bid_px, itch_bid_qty, itch_ask_px, itch_ask_qty;
@@ -872,6 +910,7 @@ itch_tap_inst (
     .clk(sfp_rx_clk[0]),
     .rst(sfp_rx_rst[0]),
     .axis_mon(axis_sfp_rx[0]),
+    .m_axis_delta(axis_delta_rx),
     .ladder_overflow(itch_ladder_ovf),
     .fifo_overflow(itch_fifo_ovf),
     .cfg_imbalance_thresh(itch_thresh_rx),

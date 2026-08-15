@@ -84,13 +84,14 @@ lib_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'lib'))
 taxi_src_dir = os.path.abspath(os.path.join(lib_dir, 'taxi', 'src'))
 
 def test_itch_delta_dma(request):
-    dut = "itch_delta_dma"
+    dut = "cndm_axis_rec_dma"
     module = os.path.splitext(os.path.basename(__file__))[0]
     toplevel = module
 
+    cndm_rtl_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', '..', '..', '..', 'rtl'))
     verilog_sources = [
         os.path.join(tests_dir, f"{toplevel}.sv"),
-        os.path.join(rtl_dir, "itch_delta_dma.sv"),
+        os.path.join(cndm_rtl_dir, "cndm_axis_rec_dma.sv"),
         os.path.join(taxi_src_dir, "axis", "rtl", "taxi_axis_if.sv"),
         os.path.join(taxi_src_dir, "dma", "rtl", "taxi_dma_desc_if.sv"),
         os.path.join(taxi_src_dir, "dma", "rtl", "taxi_dma_ram_if.sv"),

@@ -35,6 +35,7 @@ module cndm_micro_pcie_us #(
 
     // Structural configuration
     parameter PORTS = 2,
+    parameter EXTRA_DMA_PORTS = 0,
     parameter logic BRD_CTRL_EN = 1'b0,
     parameter SYS_CLK_PER_NS_NUM = 4,
     parameter SYS_CLK_PER_NS_DEN = 1,
@@ -144,10 +145,17 @@ module cndm_micro_pcie_us #(
 
     input  wire logic                     mac_rx_clk[PORTS],
     input  wire logic                     mac_rx_rst[PORTS],
-    taxi_axis_if.snk                      mac_axis_rx[PORTS]
+    taxi_axis_if.snk                      mac_axis_rx[PORTS],
+
+    taxi_axis_if.snk                      s_axis_rec,
+    input  wire logic [63:0]              rec_ring_base = '0,
+    input  wire logic                     rec_ring_enable = 1'b0,
+    output wire logic [31:0]              rec_prod_ptr,
+    output wire logic                     rec_ring_overflow
 );
 
-localparam CL_PORTS = $clog2(PORTS);
+localparam DMA_PORTS = PORTS + EXTRA_DMA_PORTS;
+localparam CL_PORTS = $clog2(DMA_PORTS);
 
 taxi_axil_if #(
     .DATA_W(AXIL_CTRL_DATA_W),
@@ -202,7 +210,7 @@ localparam PCIE_TAG_CNT = 64;//AXIS_PCIE_RQ_USER_W == 60 ? 64 : 256,
 localparam logic IMM_EN = 1'b0;
 localparam IMM_W = 32;
 localparam LEN_W = 20;
-localparam TAG_W = 8;
+localparam TAG_W = 7+CL_PORTS;
 localparam RD_OP_TBL_SIZE = PCIE_TAG_CNT;
 localparam RD_TX_LIMIT = 2**(RQ_SEQ_NUM_W-1);
 localparam logic RD_TX_FC_EN = 1'b1;
@@ -568,6 +576,7 @@ cndm_micro_core #(
 
     // Structural configuration
     .PORTS(PORTS),
+    .EXTRA_DMA_PORTS(EXTRA_DMA_PORTS),
     .BRD_CTRL_EN(BRD_CTRL_EN),
     .SYS_CLK_PER_NS_NUM(SYS_CLK_PER_NS_NUM),
     .SYS_CLK_PER_NS_DEN(SYS_CLK_PER_NS_DEN),
@@ -641,7 +650,13 @@ core_inst (
 
     .mac_rx_clk(mac_rx_clk),
     .mac_rx_rst(mac_rx_rst),
-    .mac_axis_rx(mac_axis_rx)
+    .mac_axis_rx(mac_axis_rx),
+
+    .s_axis_rec(s_axis_rec),
+    .rec_ring_base(rec_ring_base),
+    .rec_ring_enable(rec_ring_enable),
+    .rec_prod_ptr(rec_prod_ptr),
+    .rec_ring_overflow(rec_ring_overflow)
 );
 
 endmodule

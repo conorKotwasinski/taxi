@@ -37,7 +37,7 @@ logic              cfg_ring_enable;
 logic [31:0]       prod_ptr;
 logic              ring_overflow;
 
-itch_delta_dma #(
+cndm_axis_rec_dma #(
     .REC_BYTES(REC_BYTES), .RING_ENTRIES(RING_ENTRIES),
     .ADDR_W(ADDR_W), .LEN_W(LEN_W), .TAG_W(TAG_W),
     .RAM_SEGS(RAM_SEGS), .RAM_SEG_ADDR_W(RAM_SEG_ADDR_W),
@@ -46,7 +46,7 @@ itch_delta_dma #(
 )
 uut (
     .clk(clk), .rst(rst),
-    .s_axis_delta(s_axis_delta),
+    .s_axis_rec(s_axis_delta),
     .m_host_desc_req(host_desc),
     .s_host_desc_sts(host_desc),
     .dma_ram_rd(dma_ram_rd),

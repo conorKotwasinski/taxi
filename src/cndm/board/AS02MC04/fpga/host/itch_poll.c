@@ -87,6 +87,64 @@ static void print_book(int fd)
            (st & ITCH_BOOK_STATUS_FIFO_OVF)   ? "[fifo-ovf] "   : "");
 }
 
+static int ring_status(int fd, uint64_t *base_out, uint32_t *ctrl_out)
+{
+    uint32_t lo = 0, hi = 0, ctrl = 0;
+    int rc = 0;
+
+    rc |= reg_read(fd, ITCH_REG_RING_BASE_LO, &lo);
+    rc |= reg_read(fd, ITCH_REG_RING_BASE_HI, &hi);
+    rc |= reg_read(fd, ITCH_REG_RING_CTRL, &ctrl);
+    if (rc)
+        return -1;
+
+    if (base_out)
+        *base_out = ((uint64_t)hi << 32) | lo;
+    if (ctrl_out)
+        *ctrl_out = ctrl;
+    return 0;
+}
+
+static int ring_configure(int fd, uint64_t base, int enable)
+{
+    uint64_t rb_base = 0;
+    uint32_t rb_ctrl = 0;
+
+    if (reg_write(fd, ITCH_REG_RING_CTRL, 0)) {
+        fprintf(stderr, "ring: disable before reconfigure failed\n");
+        return -1;
+    }
+    if (reg_write(fd, ITCH_REG_RING_BASE_LO, (uint32_t)(base & 0xffffffffu)) ||
+        reg_write(fd, ITCH_REG_RING_BASE_HI, (uint32_t)(base >> 32))) {
+        fprintf(stderr, "ring: base write failed\n");
+        return -1;
+    }
+    if (reg_write(fd, ITCH_REG_RING_CTRL,
+                  enable ? ITCH_RING_CTRL_ENABLE : 0u)) {
+        fprintf(stderr, "ring: ctrl write failed\n");
+        return -1;
+    }
+
+    if (ring_status(fd, &rb_base, &rb_ctrl)) {
+        fprintf(stderr, "ring: readback failed\n");
+        return -1;
+    }
+    if (rb_base != base) {
+        fprintf(stderr, "ring: base readback 0x%016llx != 0x%016llx\n",
+                (unsigned long long)rb_base, (unsigned long long)base);
+        return -1;
+    }
+    if ((rb_ctrl & ITCH_RING_CTRL_ENABLE) != (enable ? ITCH_RING_CTRL_ENABLE : 0u)) {
+        fprintf(stderr, "ring: ctrl readback 0x%08x, enable=%d not applied\n",
+                rb_ctrl, enable);
+        return -1;
+    }
+
+    printf("ring base 0x%016llx  %s\n", (unsigned long long)base,
+           enable ? "enabled" : "disabled");
+    return 0;
+}
+
 static void ring_consume(volatile struct itch_delta *ring, uint32_t entries,
                          uint64_t max_records)
 {
@@ -130,7 +188,13 @@ static void ring_consume(volatile struct itch_delta *ring, uint32_t entries,
 static void usage(const char *p)
 {
     fprintf(stderr,
-        "usage: %s <pci-bdf> [--threshold N] [--ring] [--count N]\n", p);
+        "usage: %s <pci-bdf> [--threshold N] [--ring] [--count N]\n"
+        "       %s <pci-bdf> --ring-base ADDR [--ring-disable]\n"
+        "       %s <pci-bdf> --ring-status\n"
+        "\n"
+        "ADDR is the device-visible DMA address of the ring buffer, as\n"
+        "returned by dma_alloc_coherent in the driver. With an IOMMU active\n"
+        "this is an IOVA, not a physical address.\n", p, p, p);
 }
 
 int main(int argc, char **argv)
@@ -141,6 +205,8 @@ int main(int argc, char **argv)
     long threshold = -1;
     int ring_mode = 0;
     uint64_t count = 16;
+    int have_ring_base = 0, ring_disable = 0, show_ring_status = 0;
+    uint64_t ring_base = 0;
 
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--threshold") && i + 1 < argc)
@@ -149,7 +215,27 @@ int main(int argc, char **argv)
             ring_mode = 1;
         else if (!strcmp(argv[i], "--count") && i + 1 < argc)
             count = strtoull(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--ring-base") && i + 1 < argc) {
+            errno = 0;
+            char *end = NULL;
+            ring_base = strtoull(argv[++i], &end, 0);
+            if (errno || !end || *end) {
+                fprintf(stderr, "bad --ring-base value '%s'\n", argv[i]);
+                return 1;
+            }
+            have_ring_base = 1;
+        }
+        else if (!strcmp(argv[i], "--ring-disable"))
+            ring_disable = 1;
+        else if (!strcmp(argv[i], "--ring-status"))
+            show_ring_status = 1;
         else { usage(argv[0]); return 1; }
+    }
+
+    if (have_ring_base && (ring_base & (ITCH_REC_BYTES - 1))) {
+        fprintf(stderr, "--ring-base 0x%llx is not %u-byte aligned\n",
+                (unsigned long long)ring_base, ITCH_REC_BYTES);
+        return 1;
     }
 
     int fd = vpd_open(bdf);
@@ -161,6 +247,40 @@ int main(int argc, char **argv)
             printf("set imbalance threshold = %ld\n", threshold);
         else
             fprintf(stderr, "threshold write failed\n");
+    }
+
+    if (have_ring_base) {
+        if (ring_configure(fd, ring_base, !ring_disable)) {
+            close(fd);
+            return 2;
+        }
+    } else if (ring_disable) {
+        uint64_t cur = 0;
+        if (ring_status(fd, &cur, NULL) || ring_configure(fd, cur, 0)) {
+            close(fd);
+            return 2;
+        }
+    }
+
+    if (show_ring_status) {
+        uint64_t base = 0;
+        uint32_t ctrl = 0;
+        if (ring_status(fd, &base, &ctrl)) {
+            close(fd);
+            return 2;
+        }
+        printf("ring base 0x%016llx  ctrl 0x%08x  %s\n",
+               (unsigned long long)base, ctrl,
+               (ctrl & ITCH_RING_CTRL_ENABLE) ? "enabled" : "disabled");
+        if (!ring_mode) {
+            close(fd);
+            return 0;
+        }
+    }
+
+    if (have_ring_base && !ring_mode) {
+        close(fd);
+        return 0;
     }
 
     if (!ring_mode) {

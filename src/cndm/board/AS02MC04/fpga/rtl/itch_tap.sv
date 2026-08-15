@@ -20,6 +20,8 @@ module itch_tap #
 
     taxi_axis_if.mon   axis_mon,
 
+    taxi_axis_if.src   m_axis_delta,
+
     output wire logic                          ladder_overflow,
     output wire logic                          fifo_overflow,
 
@@ -89,7 +91,15 @@ module itch_tap #
     );
 
     taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(1)) axis_delta();
-    assign axis_delta.tready = 1'b1;
+    assign m_axis_delta.tdata  = axis_delta.tdata;
+    assign m_axis_delta.tkeep  = axis_delta.tkeep;
+    assign m_axis_delta.tstrb  = axis_delta.tstrb;
+    assign m_axis_delta.tlast  = axis_delta.tlast;
+    assign m_axis_delta.tid    = axis_delta.tid;
+    assign m_axis_delta.tdest  = axis_delta.tdest;
+    assign m_axis_delta.tuser  = axis_delta.tuser;
+    assign m_axis_delta.tvalid = axis_delta.tvalid;
+    assign axis_delta.tready   = m_axis_delta.tready;
 
     itch_decode #(
         .SYM_COUNT(SYM_COUNT),
