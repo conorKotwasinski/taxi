@@ -30,7 +30,8 @@ module cndm_axis_rec_dma #
     input  wire logic [ADDR_W-1:0] cfg_ring_base,
     input  wire logic              cfg_ring_enable,
 
-    output wire logic [31:0]       prod_ptr
+    output wire logic [31:0]       prod_ptr,
+    output wire logic              ring_busy
 );
 
     localparam RING_AW = $clog2(RING_ENTRIES);
@@ -115,6 +116,7 @@ module cndm_axis_rec_dma #
     assign m_host_desc_req.req_valid    = host_req_valid_reg;
 
     assign prod_ptr      = prod_ptr_reg;
+    assign ring_busy     = (state_reg != ST_ARM);
 
     always_comb begin
         state_next    = state_reg;
@@ -130,7 +132,9 @@ module cndm_axis_rec_dma #
                     state_next = ST_CAPTURE;
             end
             ST_CAPTURE: begin
-                if (ram_desc.sts_valid) begin
+                if (!cfg_ring_enable)
+                    state_next = ST_ARM;
+                else if (ram_desc.sts_valid) begin
                     cap_len_next = ram_desc.sts_len;
                     state_next   = ST_HOST;
                 end

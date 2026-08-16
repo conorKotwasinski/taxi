@@ -35,7 +35,7 @@ taxi_dma_ram_if #(
 logic [ADDR_W-1:0] cfg_ring_base;
 logic              cfg_ring_enable;
 logic [31:0]       prod_ptr;
-logic              ring_overflow;
+logic              ring_busy;
 
 cndm_axis_rec_dma #(
     .REC_BYTES(REC_BYTES), .RING_ENTRIES(RING_ENTRIES),
@@ -53,7 +53,7 @@ uut (
     .cfg_ring_base(cfg_ring_base),
     .cfg_ring_enable(cfg_ring_enable),
     .prod_ptr(prod_ptr),
-    .ring_overflow(ring_overflow)
+    .ring_busy(ring_busy)
 );
 
 localparam SEG_BYTES = RAM_SEG_DATA_W/8;

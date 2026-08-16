@@ -556,6 +556,7 @@ if (EXTRA_DMA_PORTS > 0) begin : g_rec_dma
     localparam logic [31:0] REC_RING_MAGIC = 32'h52454331;
     logic [63:0] ring_base_reg = '0;
     logic        ring_enable_reg = 1'b0;
+    wire         ring_busy;
     logic        rc_awready_reg = 1'b0, rc_wready_reg = 1'b0, rc_bvalid_reg = 1'b0;
     logic        rc_arready_reg = 1'b0, rc_rvalid_reg = 1'b0;
     logic [31:0] rc_rdata_reg = '0;
@@ -598,7 +599,7 @@ if (EXTRA_DMA_PORTS > 0) begin : g_rec_dma
                 16'h0000: rc_rdata_reg <= REC_RING_MAGIC;
                 16'h0004: rc_rdata_reg <= ring_base_reg[31:0];
                 16'h0008: rc_rdata_reg <= ring_base_reg[63:32];
-                16'h000C: rc_rdata_reg <= {31'd0, ring_enable_reg};
+                16'h000C: rc_rdata_reg <= {30'd0, ring_busy, ring_enable_reg};
                 default:  rc_rdata_reg <= '0;
             endcase
         end
@@ -650,7 +651,8 @@ if (EXTRA_DMA_PORTS > 0) begin : g_rec_dma
         .dma_ram_rd(dma_ram_int[e]),
         .cfg_ring_base(ring_base_reg),
         .cfg_ring_enable(ring_enable_reg),
-        .prod_ptr(rec_prod_ptr)
+        .prod_ptr(rec_prod_ptr),
+        .ring_busy(ring_busy)
     );
 end else begin : g_no_rec_dma
     assign s_axis_rec.tready = 1'b1;
