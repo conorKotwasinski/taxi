@@ -30,8 +30,7 @@ module cndm_axis_rec_dma #
     input  wire logic [ADDR_W-1:0] cfg_ring_base,
     input  wire logic              cfg_ring_enable,
 
-    output wire logic [31:0]       prod_ptr,
-    output wire logic              ring_overflow
+    output wire logic [31:0]       prod_ptr
 );
 
     localparam RING_AW = $clog2(RING_ENTRIES);
@@ -80,7 +79,6 @@ module cndm_axis_rec_dma #
     logic [31:0]        prod_ptr_reg, prod_ptr_next;
     logic [TAG_W-1:0]   tag_reg,      tag_next;
     logic [15:0]        cap_len_reg,  cap_len_next;
-    logic               ovf_reg,      ovf_next;
 
     logic ram_req_valid_reg;
     assign ram_desc.req_src_addr = '0;
@@ -117,7 +115,6 @@ module cndm_axis_rec_dma #
     assign m_host_desc_req.req_valid    = host_req_valid_reg;
 
     assign prod_ptr      = prod_ptr_reg;
-    assign ring_overflow = ovf_reg;
 
     always_comb begin
         state_next    = state_reg;
@@ -125,7 +122,6 @@ module cndm_axis_rec_dma #
         prod_ptr_next = prod_ptr_reg;
         tag_next      = tag_reg;
         cap_len_next  = cap_len_reg;
-        ovf_next      = 1'b0;
 
         case (state_reg)
             ST_ARM: begin
@@ -161,7 +157,6 @@ module cndm_axis_rec_dma #
         prod_ptr_reg <= prod_ptr_next;
         tag_reg      <= tag_next;
         cap_len_reg  <= cap_len_next;
-        ovf_reg      <= ovf_next;
 
         if (state_reg == ST_ARM && cfg_ring_enable)
             ram_req_valid_reg <= 1'b1;
@@ -182,7 +177,6 @@ module cndm_axis_rec_dma #
             prod_ptr_reg       <= '0;
             tag_reg            <= '0;
             cap_len_reg        <= '0;
-            ovf_reg            <= 1'b0;
             ram_req_valid_reg  <= 1'b0;
             host_req_valid_reg <= 1'b0;
         end

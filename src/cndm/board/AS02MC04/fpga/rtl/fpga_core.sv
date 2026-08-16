@@ -724,7 +724,6 @@ sfp_mac_inst (
 );
 
 wire [31:0] itch_rec_prod_ptr;
-wire        itch_rec_ring_ovf;
 taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(1)) axis_delta_rx();
 taxi_axis_if #(.DATA_W(64), .USER_EN(1), .USER_W(1)) axis_delta_pcie();
 
@@ -853,10 +852,9 @@ cndm_inst (
     .mac_axis_rx(axis_sfp_rx),
 
     .s_axis_rec(axis_delta_pcie),
-    .rec_ring_base({itch_user_ctrl[2], itch_user_ctrl[1]}),
-    .rec_ring_enable(itch_user_ctrl[3][0]),
-    .rec_prod_ptr(itch_rec_prod_ptr),
-    .rec_ring_overflow(itch_rec_ring_ovf)
+    .rec_ring_base('0),
+    .rec_ring_enable(1'b0),
+    .rec_prod_ptr(itch_rec_prod_ptr)
 );
 
 taxi_axis_async_fifo #(

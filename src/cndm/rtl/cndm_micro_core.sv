@@ -114,8 +114,7 @@ module cndm_micro_core #(
     taxi_axis_if.snk               s_axis_rec,
     input  wire logic [63:0]       rec_ring_base = '0,
     input  wire logic              rec_ring_enable = 1'b0,
-    output wire logic [31:0]       rec_prod_ptr,
-    output wire logic              rec_ring_overflow
+    output wire logic [31:0]       rec_prod_ptr
 );
 
 localparam DMA_PORTS = PORTS + EXTRA_DMA_PORTS;
@@ -133,6 +132,8 @@ localparam RAM_SEL_W = dma_ram_wr.SEL_W;
 localparam PTP_OFFSET_DP = 0;
 localparam PORT_OFFSET_DP = PTP_OFFSET_DP + (PTP_TS_EN ? 1 : 0);
 localparam PORT_OFFSET_HOST = 2;
+localparam RING_CTRL_SLAVE = PORTS + PORT_OFFSET_HOST;
+localparam AXIL_CTRL_M = PORTS + PORT_OFFSET_HOST + (EXTRA_DMA_PORTS > 0 ? 1 : 0);
 
 localparam PTP_BASE_ADDR_DP = PTP_OFFSET_DP * 32'h00010000;
 localparam PORT_BASE_ADDR_DP = PORT_OFFSET_DP * 32'h00010000;
@@ -155,7 +156,7 @@ taxi_axil_if #(
     .RUSER_EN(s_axil_ctrl_wr.RUSER_EN),
     .RUSER_W(s_axil_ctrl_wr.RUSER_W)
 )
-axil_ctrl[PORTS+PORT_OFFSET_HOST]();
+axil_ctrl[AXIL_CTRL_M]();
 
 taxi_axil_interconnect_1s #(
     .M_COUNT($size(axil_ctrl)),
@@ -552,6 +553,64 @@ dma_mux_inst (
 if (EXTRA_DMA_PORTS > 0) begin : g_rec_dma
     localparam e = PORTS;
 
+    localparam logic [31:0] REC_RING_MAGIC = 32'h52454331;
+    logic [63:0] ring_base_reg = '0;
+    logic        ring_enable_reg = 1'b0;
+    logic        rc_awready_reg = 1'b0, rc_wready_reg = 1'b0, rc_bvalid_reg = 1'b0;
+    logic        rc_arready_reg = 1'b0, rc_rvalid_reg = 1'b0;
+    logic [31:0] rc_rdata_reg = '0;
+
+    assign axil_ctrl[RING_CTRL_SLAVE].awready = rc_awready_reg;
+    assign axil_ctrl[RING_CTRL_SLAVE].wready  = rc_wready_reg;
+    assign axil_ctrl[RING_CTRL_SLAVE].bresp   = '0;
+    assign axil_ctrl[RING_CTRL_SLAVE].buser   = '0;
+    assign axil_ctrl[RING_CTRL_SLAVE].bvalid  = rc_bvalid_reg;
+    assign axil_ctrl[RING_CTRL_SLAVE].arready = rc_arready_reg;
+    assign axil_ctrl[RING_CTRL_SLAVE].rdata   = rc_rdata_reg;
+    assign axil_ctrl[RING_CTRL_SLAVE].rresp   = '0;
+    assign axil_ctrl[RING_CTRL_SLAVE].ruser   = '0;
+    assign axil_ctrl[RING_CTRL_SLAVE].rvalid  = rc_rvalid_reg;
+
+    always_ff @(posedge clk) begin
+        rc_awready_reg <= 1'b0;
+        rc_wready_reg  <= 1'b0;
+        rc_bvalid_reg  <= rc_bvalid_reg && !axil_ctrl[RING_CTRL_SLAVE].bready;
+        rc_arready_reg <= 1'b0;
+        rc_rvalid_reg  <= rc_rvalid_reg && !axil_ctrl[RING_CTRL_SLAVE].rready;
+
+        if (axil_ctrl[RING_CTRL_SLAVE].awvalid && axil_ctrl[RING_CTRL_SLAVE].wvalid
+                && !rc_bvalid_reg) begin
+            rc_awready_reg <= 1'b1;
+            rc_wready_reg  <= 1'b1;
+            rc_bvalid_reg  <= 1'b1;
+            case ({axil_ctrl[RING_CTRL_SLAVE].awaddr[15:2], 2'b00})
+                16'h0004: ring_base_reg[31:0]  <= axil_ctrl[RING_CTRL_SLAVE].wdata;
+                16'h0008: ring_base_reg[63:32] <= axil_ctrl[RING_CTRL_SLAVE].wdata;
+                16'h000C: ring_enable_reg      <= axil_ctrl[RING_CTRL_SLAVE].wdata[0];
+                default: begin end
+            endcase
+        end
+
+        if (axil_ctrl[RING_CTRL_SLAVE].arvalid && !rc_rvalid_reg) begin
+            rc_arready_reg <= 1'b1;
+            rc_rvalid_reg  <= 1'b1;
+            case ({axil_ctrl[RING_CTRL_SLAVE].araddr[15:2], 2'b00})
+                16'h0000: rc_rdata_reg <= REC_RING_MAGIC;
+                16'h0004: rc_rdata_reg <= ring_base_reg[31:0];
+                16'h0008: rc_rdata_reg <= ring_base_reg[63:32];
+                16'h000C: rc_rdata_reg <= {31'd0, ring_enable_reg};
+                default:  rc_rdata_reg <= '0;
+            endcase
+        end
+
+        if (rst) begin
+            ring_base_reg   <= '0;
+            ring_enable_reg <= 1'b0;
+            rc_bvalid_reg   <= 1'b0;
+            rc_rvalid_reg   <= 1'b0;
+        end
+    end
+
     assign dma_rd_desc_int[e].req_src_addr = '0;
     assign dma_rd_desc_int[e].req_dst_addr = '0;
     assign dma_rd_desc_int[e].req_len      = '0;
@@ -589,15 +648,13 @@ if (EXTRA_DMA_PORTS > 0) begin : g_rec_dma
         .m_host_desc_req(dma_wr_desc_int[e]),
         .s_host_desc_sts(dma_wr_desc_int[e]),
         .dma_ram_rd(dma_ram_int[e]),
-        .cfg_ring_base(rec_ring_base),
-        .cfg_ring_enable(rec_ring_enable),
-        .prod_ptr(rec_prod_ptr),
-        .ring_overflow(rec_ring_overflow)
+        .cfg_ring_base(ring_base_reg),
+        .cfg_ring_enable(ring_enable_reg),
+        .prod_ptr(rec_prod_ptr)
     );
 end else begin : g_no_rec_dma
     assign s_axis_rec.tready = 1'b1;
     assign rec_prod_ptr = '0;
-    assign rec_ring_overflow = 1'b0;
 end
 
 taxi_axis_if #(

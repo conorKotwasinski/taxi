@@ -602,6 +602,102 @@ async def run_test_delta_ring_backdoor_cfg(dut):
     await RisingEdge(dut.clk_125mhz)
 
 
+@cocotb.test()
+async def run_test_delta_ring_bar_cfg(dut):
+    tb = TB(dut)
+    await tb.init()
+
+    driver = cndm.Driver()
+    await driver.init_pcie_dev(tb.rc.find_device(tb.dev.functions[0].pcie_id))
+
+    for k in range(1200):
+        await RisingEdge(tb.dut.clk_125mhz)
+
+    REC_RING_BASE = 0x40000
+    REG_ID    = REC_RING_BASE + 0x00
+    REG_BASE_LO = REC_RING_BASE + 0x04
+    REG_BASE_HI = REC_RING_BASE + 0x08
+    REG_CTRL  = REC_RING_BASE + 0x0C
+    REC_RING_MAGIC = 0x52454331
+
+    magic = await driver.hw_regs.read_dword(REG_ID)
+    tb.log.info("rec-ring id register: %#010x", magic)
+    assert magic == REC_RING_MAGIC, \
+        f"rec-ring id {magic:#010x} != magic {REC_RING_MAGIC:#010x}"
+
+    REC_BYTES = 32
+    RING_ENTRIES = 64
+    region = driver.pool.alloc_region(RING_ENTRIES * REC_BYTES)
+    ring_base = region.get_absolute_address(0)
+
+    await driver.hw_regs.write_dword(REG_CTRL, 0)
+    await driver.hw_regs.write_dword(REG_BASE_LO, ring_base & 0xffffffff)
+    await driver.hw_regs.write_dword(REG_BASE_HI, (ring_base >> 32) & 0xffffffff)
+    await driver.hw_regs.write_dword(REG_CTRL, 1)
+
+    rb = await driver.hw_regs.read_dword(REG_CTRL)
+    assert rb & 1, f"ring ctrl enable not readback, got {rb:#x}"
+
+    for k in range(200):
+        await RisingEdge(tb.dut.clk_125mhz)
+
+    mk = cndm_itch._mk
+    framed = cndm_itch._framed
+    stream = framed(
+        mk('A', ref=1, side='B', shares=100, stock='AAPL', price=1500000),
+        mk('A', ref=2, side='B', shares=200, stock='AAPL', price=1499900),
+        mk('A', ref=3, side='S', shares=150, stock='AAPL', price=1500100),
+        mk('A', ref=4, side='B', shares=400, stock='AAPL', price=1500000),
+        mk('A', ref=5, side='S', shares=250, stock='MSFT', price=4200100),
+        mk('E', ref=1, shares=40),
+        mk('D', ref=3),
+    )
+    book = cndm_itch.build_book(stream, symbols=['AAPL', 'MSFT', 'NVDA', 'AMZN'])
+
+    l2 = bytes(6) + bytes([2, 0, 0, 0, 0, 2]) + b'\x88\xb5'
+    frame = bytearray(l2 + stream)
+    frame += bytes(max(0, 60 - len(frame)))
+    await tb.sfp_sources[0].send(XgmiiFrame.from_payload(bytes(frame)))
+
+    for k in range(4000):
+        await RisingEdge(tb.dut.clk_125mhz)
+
+    SYM_ID = {'AAPL': 0, 'MSFT': 1, 'NVDA': 2, 'AMZN': 3}
+    mem = bytes(region.mem)
+    records = []
+    prev_seq = -1
+    for i in range(RING_ENTRIES):
+        rec = mem[i*REC_BYTES:(i+1)*REC_BYTES]
+        if rec == bytes(REC_BYTES):
+            continue
+        records.append(rec)
+
+    tb.log.info("delta records in host ring: %d", len(records))
+    assert records, "no delta records reached host memory via BAR config"
+
+    last_by_sym = {}
+    for rec in records:
+        bid_px, ask_px = struct.unpack_from('<II', rec, 8)
+        bid_q,  ask_q  = struct.unpack_from('<II', rec, 16)
+        sym, pad, flags, seq = struct.unpack_from('<HBBI', rec, 24)
+        assert flags & 0x04, f"valid bit not set in flags {flags:#x}"
+        assert seq == prev_seq + 1, f"seq not monotonic: {seq} after {prev_seq}"
+        prev_seq = seq
+        last_by_sym[sym] = (bid_px, bid_q, ask_px, ask_q)
+
+    for name in ('AAPL', 'MSFT'):
+        exp = book.top_of_book(name)
+        got = last_by_sym.get(SYM_ID[name])
+        tb.log.info("%s: last-delta=%r golden=%r", name, got, exp)
+        assert got == exp, f"{name}: delta {got} != golden {exp}"
+
+    await driver.hw_regs.write_dword(REG_CTRL, 0)
+    rb = await driver.hw_regs.read_dword(REG_CTRL)
+    assert (rb & 1) == 0, f"ring ctrl disable not readback, got {rb:#x}"
+
+    await RisingEdge(dut.clk_125mhz)
+
+
 # cocotb-test
 
 tests_dir = os.path.abspath(os.path.dirname(__file__))

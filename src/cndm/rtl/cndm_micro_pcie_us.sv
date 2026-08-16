@@ -150,8 +150,7 @@ module cndm_micro_pcie_us #(
     taxi_axis_if.snk                      s_axis_rec,
     input  wire logic [63:0]              rec_ring_base = '0,
     input  wire logic                     rec_ring_enable = 1'b0,
-    output wire logic [31:0]              rec_prod_ptr,
-    output wire logic                     rec_ring_overflow
+    output wire logic [31:0]              rec_prod_ptr
 );
 
 localparam DMA_PORTS = PORTS + EXTRA_DMA_PORTS;
@@ -655,8 +654,7 @@ core_inst (
     .s_axis_rec(s_axis_rec),
     .rec_ring_base(rec_ring_base),
     .rec_ring_enable(rec_ring_enable),
-    .rec_prod_ptr(rec_prod_ptr),
-    .rec_ring_overflow(rec_ring_overflow)
+    .rec_prod_ptr(rec_prod_ptr)
 );
 
 endmodule
