@@ -9,6 +9,7 @@ Authors:
 */
 
 #include "cndm.h"
+#include "cndm_ioctl.h"
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/rtc.h>
@@ -37,6 +38,54 @@ static void cndm_free_id(struct cndm_dev *cdev)
 {
 	ida_free(&cndm_instance_ida, cdev->id);
 }
+
+static ssize_t rec_ring_dma_addr_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct cndm_dev *cdev = dev_get_drvdata(dev);
+
+	if (!cdev || !cdev->rec_ring_virt)
+		return -ENODEV;
+
+	return sysfs_emit(buf, "0x%llx\n",
+			(unsigned long long)cdev->rec_ring_dma);
+}
+static DEVICE_ATTR_RO(rec_ring_dma_addr);
+
+static ssize_t rec_ring_size_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct cndm_dev *cdev = dev_get_drvdata(dev);
+
+	if (!cdev || !cdev->rec_ring_virt)
+		return -ENODEV;
+
+	return sysfs_emit(buf, "%zu\n", cdev->rec_ring_size);
+}
+static DEVICE_ATTR_RO(rec_ring_size);
+
+static ssize_t rec_ring_region_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct cndm_dev *cdev = dev_get_drvdata(dev);
+
+	if (!cdev || !cdev->rec_ring_virt)
+		return -ENODEV;
+
+	return sysfs_emit(buf, "%u\n", CNDM_REC_RING_REGION);
+}
+static DEVICE_ATTR_RO(rec_ring_region);
+
+static struct attribute *cndm_rec_ring_attrs[] = {
+	&dev_attr_rec_ring_dma_addr.attr,
+	&dev_attr_rec_ring_size.attr,
+	&dev_attr_rec_ring_region.attr,
+	NULL,
+};
+
+static const struct attribute_group cndm_rec_ring_group = {
+	.attrs = cndm_rec_ring_attrs,
+};
 
 static void cndm_common_remove(struct cndm_dev *cdev);
 
@@ -248,6 +297,27 @@ static int cndm_common_probe(struct cndm_dev *cdev)
 	}
 
 fail_netdev:
+	cdev->rec_ring_size = CNDM_REC_RING_SIZE;
+	cdev->rec_ring_virt = dma_alloc_coherent(dev, cdev->rec_ring_size,
+			&cdev->rec_ring_dma, GFP_KERNEL);
+	if (!cdev->rec_ring_virt) {
+		cdev->rec_ring_size = 0;
+		dev_warn(dev, "Failed to allocate %u byte record ring",
+				CNDM_REC_RING_SIZE);
+	} else {
+		dev_info(dev, "Record ring: %zu bytes at DMA address 0x%llx",
+				cdev->rec_ring_size,
+				(unsigned long long)cdev->rec_ring_dma);
+	}
+
+	ret = device_add_group(dev, &cndm_rec_ring_group);
+	if (ret) {
+		dev_warn(dev, "Failed to add record ring sysfs group: %d", ret);
+		cdev->rec_ring_group_added = false;
+	} else {
+		cdev->rec_ring_group_added = true;
+	}
+
 	cdev->misc_dev.minor = MISC_DYNAMIC_MINOR;
 	cdev->misc_dev.name = cdev->name;
 	cdev->misc_dev.fops = &cndm_fops;
@@ -277,6 +347,18 @@ static void cndm_common_remove(struct cndm_dev *cdev)
 
 	if (cdev->misc_dev.this_device)
 		misc_deregister(&cdev->misc_dev);
+
+	if (cdev->rec_ring_group_added) {
+		device_remove_group(cdev->dev, &cndm_rec_ring_group);
+		cdev->rec_ring_group_added = false;
+	}
+
+	if (cdev->rec_ring_virt) {
+		dma_free_coherent(cdev->dev, cdev->rec_ring_size,
+				cdev->rec_ring_virt, cdev->rec_ring_dma);
+		cdev->rec_ring_virt = NULL;
+		cdev->rec_ring_size = 0;
+	}
 
 	for (k = 0; k < ARRAY_SIZE(cdev->ndev); k++) {
 		if (cdev->ndev[k]) {

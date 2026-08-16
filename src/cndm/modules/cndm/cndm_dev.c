@@ -55,6 +55,17 @@ static int cndm_mmap(struct file *file, struct vm_area_struct *vma)
 		return io_remap_pfn_range(vma, vma->vm_start,
 			(cdev->hw_regs_phys >> PAGE_SHIFT) + pgoff,
 			req_len, pgprot_noncached(vma->vm_page_prot));
+	case CNDM_REC_RING_REGION:
+		if (!cdev->rec_ring_virt)
+			return -ENODEV;
+
+		if (req_start + req_len > cdev->rec_ring_size)
+			return -EINVAL;
+
+		vma->vm_pgoff = pgoff;
+
+		return dma_mmap_coherent(cdev->dev, vma, cdev->rec_ring_virt,
+			cdev->rec_ring_dma, cdev->rec_ring_size);
 	default:
 		return -EINVAL;
 	}
@@ -84,7 +95,7 @@ static long cndm_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			return -EINVAL;
 
 		info.flags = 0;
-		info.num_regions = 1;
+		info.num_regions = cdev->rec_ring_virt ? 2 : 1;
 		info.num_irqs = 0;
 
 		return copy_to_user((void __user *)arg, &info, minsz) ? -EFAULT : 0;
@@ -116,6 +127,17 @@ static long cndm_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			info.size = cdev->hw_regs_size;
 			info.offset = ((u64)info.index) << 40;
 			strscpy(info.name, "ctrl", sizeof(info.name));
+			break;
+		case CNDM_REC_RING_REGION:
+			if (!cdev->rec_ring_virt)
+				return -EINVAL;
+
+			info.type = CNDM_REGION_TYPE_REC_RING;
+			info.next = 0;
+			info.child = 0;
+			info.size = cdev->rec_ring_size;
+			info.offset = ((u64)info.index) << 40;
+			strscpy(info.name, "recring", sizeof(info.name));
 			break;
 		default:
 			return -EINVAL;

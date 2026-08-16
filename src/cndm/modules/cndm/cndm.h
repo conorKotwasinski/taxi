@@ -13,6 +13,7 @@ Authors:
 
 #include <linux/kernel.h>
 #include <linux/pci.h>
+#include <linux/dma-mapping.h>
 #include <linux/miscdevice.h>
 #include <linux/net_tstamp.h>
 #include <linux/netdevice.h>
@@ -50,6 +51,11 @@ struct cndm_dev {
 	resource_size_t hw_regs_size;
 	phys_addr_t hw_regs_phys;
 	void __iomem *hw_addr;
+
+	void *rec_ring_virt;
+	dma_addr_t rec_ring_dma;
+	size_t rec_ring_size;
+	bool rec_ring_group_added;
 
 	struct mutex mbox_lock;
 

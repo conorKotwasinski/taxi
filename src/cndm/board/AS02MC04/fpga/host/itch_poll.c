@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <ctype.h>
 
 #include "itch_host.h"
 
@@ -176,9 +177,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--ring-base") && i + 1 < argc) {
             errno = 0;
             char *end = NULL;
-            ring_base = strtoull(argv[++i], &end, 0);
-            if (errno || !end || *end) {
-                fprintf(stderr, "bad --ring-base value '%s'\n", argv[i]);
+            const char *val = argv[++i];
+            ring_base = strtoull(val, &end, 0);
+            while (end && *end && isspace((unsigned char)*end))
+                end++;
+            if (errno || !end || end == val || *end) {
+                fprintf(stderr, "bad --ring-base value '%s'\n", val);
                 return 1;
             }
             have_ring_base = 1;

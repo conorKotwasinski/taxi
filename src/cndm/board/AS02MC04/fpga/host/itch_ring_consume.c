@@ -17,9 +17,11 @@ static const char *sym_name(uint16_t s) {
 
 static void usage(const char *p) {
     fprintf(stderr,
-        "usage: %s <ring-file> [entries]\n"
-        "  <ring-file>  mmap'd DMA ring buffer (the host region the FPGA writes)\n"
-        "  [entries]    ring entry count (default %d)\n",
+        "usage: %s <ring-file> [entries] [--region N]\n"
+        "  <ring-file>  mmap'd DMA ring buffer, e.g. /dev/cndm0 or a dump file\n"
+        "  [entries]    ring entry count (default %d)\n"
+        "  --region N   cndm mmap region index (default 0; the driver's\n"
+        "               record ring is the index in rec_ring_region)\n",
         p, ITCH_RING_ENTRIES);
 }
 
@@ -27,14 +29,31 @@ int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     if (argc < 2) { usage(argv[0]); return 1; }
     const char *path = argv[1];
-    uint32_t entries = argc > 2 ? (uint32_t)strtoul(argv[2], NULL, 0)
-                                : ITCH_RING_ENTRIES;
+    uint32_t entries = ITCH_RING_ENTRIES;
+    unsigned region = 0;
+
+    for (int i = 2; i < argc; i++) {
+        if (!strcmp(argv[i], "--region") && i + 1 < argc)
+            region = (unsigned)strtoul(argv[++i], NULL, 0);
+        else if (argv[i][0] != '-')
+            entries = (uint32_t)strtoul(argv[i], NULL, 0);
+        else { usage(argv[0]); return 1; }
+    }
+
+    if (!entries) { fprintf(stderr, "entries must be non-zero\n"); return 1; }
 
     size_t bytes = (size_t)entries * ITCH_REC_BYTES;
-    int fd = open(path, O_RDONLY);
+    off_t offset = (off_t)((uint64_t)region << 40);
+    int fd = open(path, O_RDWR);
+
+    if (fd < 0 && (errno == EACCES || errno == EROFS || errno == EPERM))
+        fd = open(path, O_RDONLY);
     if (fd < 0) { perror("open ring"); return 1; }
 
-    const uint8_t *base = mmap(NULL, bytes, PROT_READ, MAP_SHARED, fd, 0);
+    fprintf(stderr, "ring %s: %u entries, %zu bytes, region %u, offset 0x%llx\n",
+            path, entries, bytes, region, (unsigned long long)offset);
+
+    const uint8_t *base = mmap(NULL, bytes, PROT_READ, MAP_SHARED, fd, offset);
     if (base == MAP_FAILED) { perror("mmap"); close(fd); return 1; }
 
     struct itch_ring_consumer c;
