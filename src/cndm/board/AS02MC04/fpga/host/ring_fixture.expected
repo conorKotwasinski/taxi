@@ -1,0 +1,6 @@
+seq 0        AAPL bid 150.0000 x 100      ask 0.0000 x 0       
+seq 1        AAPL bid 150.0000 x 300      ask 0.0000 x 0       
+seq 2        AAPL bid 150.0000 x 300      ask 150.0100 x 150     
+seq 3        AAPL bid 150.0000 x 460      ask 150.0100 x 150     
+seq 4        MSFT bid 0.0000 x 0        ask 420.0100 x 250     
+seq 5        AAPL bid 150.0000 x 420      ask 150.0100 x 150     

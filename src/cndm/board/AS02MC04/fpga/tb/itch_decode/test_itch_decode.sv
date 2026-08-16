@@ -40,6 +40,7 @@ logic [PRICE_W-1:0] dbg_ask_px;
 logic [QTY_W-1:0]   dbg_ask_qty;
 logic [15:0]        dbg_lat_last, dbg_lat_min, dbg_lat_max;
 logic [15:0]        dbg_tlat_last, dbg_tlat_min, dbg_tlat_max;
+logic [15:0]        dbg_delta_ovf;
 
 itch_decode #(
     .SYM_COUNT(SYM_COUNT),
@@ -64,6 +65,7 @@ uut (
     .cfg_imbalance_thresh(cfg_imbalance_thresh),
 
     .ladder_overflow(),
+    .dbg_delta_ovf(dbg_delta_ovf),
 
     .dbg_sym(dbg_sym),
     .dbg_bid_px(dbg_bid_px),

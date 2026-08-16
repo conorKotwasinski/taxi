@@ -29,6 +29,7 @@ assign axis_delta.tready = 1'b1;
 assign axis_rx.tready = 1'b1;
 
 logic               ladder_overflow;
+logic [15:0]        dbg_delta_ovf;
 logic               fifo_overflow;
 
 logic [SYM_AW-1:0]  dbg_sym;
@@ -53,6 +54,7 @@ uut (
     .axis_mon(axis_rx),
     .m_axis_delta(axis_delta),
     .ladder_overflow(ladder_overflow),
+    .dbg_delta_ovf(dbg_delta_ovf),
     .fifo_overflow(fifo_overflow),
     .cfg_imbalance_thresh('0),
     .trig_valid(),

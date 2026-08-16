@@ -17,11 +17,13 @@ static const char *sym_name(uint16_t s) {
 
 static void usage(const char *p) {
     fprintf(stderr,
-        "usage: %s <ring-file> [entries] [--region N]\n"
+        "usage: %s <ring-file> [entries] [--region N] [--count N]\n"
         "  <ring-file>  mmap'd DMA ring buffer, e.g. /dev/cndm0 or a dump file\n"
         "  [entries]    ring entry count (default %d)\n"
         "  --region N   cndm mmap region index (default 0; the driver's\n"
-        "               record ring is the index in rec_ring_region)\n",
+        "               record ring is the index in rec_ring_region)\n"
+        "  --count N    consume N records then exit (for fixtures/tests);\n"
+        "               also exits on the first empty slot\n",
         p, ITCH_RING_ENTRIES);
 }
 
@@ -31,10 +33,13 @@ int main(int argc, char **argv) {
     const char *path = argv[1];
     uint32_t entries = ITCH_RING_ENTRIES;
     unsigned region = 0;
+    uint64_t want = 0;
 
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--region") && i + 1 < argc)
             region = (unsigned)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--count") && i + 1 < argc)
+            want = strtoull(argv[++i], NULL, 0);
         else if (argv[i][0] != '-')
             entries = (uint32_t)strtoul(argv[i], NULL, 0);
         else { usage(argv[0]); return 1; }
@@ -70,10 +75,13 @@ int main(int argc, char **argv) {
                    r.seq, sym_name(r.sym),
                    (double)r.bid_px / ITCH_PRICE_SCALE, r.bid_qty,
                    (double)r.ask_px / ITCH_PRICE_SCALE, r.ask_qty);
+            if (want && c.consumed >= want)
+                break;
         } else if (st == ITCH_RING_LAPPED) {
             fprintf(stderr, "[lapped] ring wrapped, %llu records missed, resync at seq %u\n",
                     (unsigned long long)c.lapped, c.expected_seq);
         } else {
+            if (want) break;
             struct timespec ts = { 0, 100000 };
             nanosleep(&ts, NULL);
             if (++idle % 100000 == 0)

@@ -27,6 +27,7 @@ itch_afxdp: itch_afxdp.c itch_book.c itch_book.h lat_hist.h
 check: itch_book_test itch_ring_test itch_ring_consume itch_poll
 	./itch_book_test
 	./itch_ring_test
+	./itch_ring_consume ring_fixture.bin 8 --count 6 2>/dev/null | diff - ring_fixture.expected && echo "ring fixture OK"
 
 clean:
 	rm -f itch_poll itch_book_test itch_afpacket itch_afxdp itch_ring_test itch_ring_consume

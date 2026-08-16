@@ -889,6 +889,7 @@ wire [31:0] itch_bid_px, itch_bid_qty, itch_ask_px, itch_ask_qty;
 wire [15:0] itch_lat_last, itch_lat_min, itch_lat_max;
 wire [15:0] itch_tlat_last, itch_tlat_min, itch_tlat_max;
 wire        itch_ladder_ovf, itch_fifo_ovf;
+wire [15:0] itch_delta_ovf;
 wire        itch_trig_valid, itch_trig_side;
 wire [1:0]  itch_trig_sym;
 
@@ -912,6 +913,7 @@ itch_tap_inst (
     .axis_mon(axis_sfp_rx[0]),
     .m_axis_delta(axis_delta_rx),
     .ladder_overflow(itch_ladder_ovf),
+    .dbg_delta_ovf(itch_delta_ovf),
     .fifo_overflow(itch_fifo_ovf),
     .cfg_imbalance_thresh(itch_thresh_rx),
     .trig_valid(itch_trig_valid),
@@ -1023,6 +1025,10 @@ taxi_sync_signal #(.WIDTH(2), .N(3)) sync_ovf (
     .clk(pcie_clk), .in({itch_fifo_ovf, itch_ladder_ovf}),
     .out({itch_fifo_ovf_pcie, itch_ladder_ovf_pcie}));
 
+wire [9:0] itch_delta_ovf_pcie;
+taxi_sync_signal #(.WIDTH(10), .N(3)) sync_dovf (
+    .clk(pcie_clk), .in(itch_delta_ovf[9:0]), .out(itch_delta_ovf_pcie));
+
 wire [31:0] itch_lat_pcie, itch_lat2_pcie;
 taxi_sync_signal #(.WIDTH(32), .N(3)) sync_lat  (.clk(pcie_clk), .in({itch_lat_max, itch_lat_min}), .out(itch_lat_pcie));
 taxi_sync_signal #(.WIDTH(16), .N(3)) sync_lat2 (.clk(pcie_clk), .in(itch_lat_last), .out(itch_lat2_pcie[15:0]));
@@ -1032,7 +1038,7 @@ assign itch_user_regs[0] = itch_bid_px_pcie;
 assign itch_user_regs[1] = itch_bid_qty_pcie;
 assign itch_user_regs[2] = itch_ask_px_pcie;
 assign itch_user_regs[3] = itch_ask_qty_pcie;
-assign itch_user_regs[4] = {10'd0, emit_frm_pcie, gen_frm_pcie, itch_fifo_ovf_pcie, itch_ladder_ovf_pcie};
+assign itch_user_regs[4] = {itch_delta_ovf_pcie, emit_frm_pcie, gen_frm_pcie, itch_fifo_ovf_pcie, itch_ladder_ovf_pcie};
 assign itch_user_regs[5] = itch_lat_pcie;
 assign itch_user_regs[6] = itch_lat2_pcie;
 

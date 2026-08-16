@@ -28,6 +28,7 @@ module itch_decode #
     input  wire logic [QTY_W-1:0]              cfg_imbalance_thresh,
 
     output wire logic                          ladder_overflow,
+    output wire logic [15:0]                   dbg_delta_ovf,
 
     input  wire logic [$clog2(SYM_COUNT)-1:0]  dbg_sym,
     output wire logic [PRICE_W-1:0]            dbg_bid_px,
@@ -185,6 +186,8 @@ module itch_decode #
     logic [31:0]       seq_reg;
     logic [31:0]       seq_snap_reg;
     logic              delta_ovf_reg;
+    logic [15:0]       delta_ovf_cnt;
+    assign dbg_delta_ovf = delta_ovf_cnt;
 
     logic [TS_W-1:0]   snap_ts_reg;
     logic [SYM_AW-1:0] snap_sym_reg;
@@ -425,6 +428,8 @@ module itch_decode #
                 snap_askq_reg   <= tsym_ask_q;
             end else begin
                 delta_ovf_reg <= 1'b1;
+                delta_ovf_cnt <= delta_ovf_cnt + 1;
+                seq_reg       <= seq_reg + 1;
             end
         end
 
@@ -711,6 +716,7 @@ module itch_decode #
             tlat_max  <= '0;
             seq_reg         <= '0;
             delta_ovf_reg   <= 1'b0;
+            delta_ovf_cnt   <= '0;
             for (int i = 0; i < LAD_N; i++)
                 lad_v[i] <= 1'b0;
             for (int o = 0; o < ORDER_COUNT; o++)

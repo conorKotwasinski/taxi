@@ -23,6 +23,7 @@ module itch_tap #
     taxi_axis_if.src   m_axis_delta,
 
     output wire logic                          ladder_overflow,
+    output wire logic [15:0]                   dbg_delta_ovf,
     output wire logic                          fifo_overflow,
 
     input  wire logic [QTY_W-1:0]              cfg_imbalance_thresh,
@@ -119,6 +120,7 @@ module itch_tap #
         .trig_side(trig_side),
         .cfg_imbalance_thresh(cfg_imbalance_thresh),
         .ladder_overflow(ladder_overflow),
+        .dbg_delta_ovf(dbg_delta_ovf),
         .dbg_sym(dbg_sym),
         .dbg_bid_px(dbg_bid_px),
         .dbg_bid_qty(dbg_bid_qty),
