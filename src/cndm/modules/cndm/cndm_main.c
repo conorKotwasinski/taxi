@@ -64,22 +64,39 @@ static ssize_t rec_ring_size_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(rec_ring_size);
 
-static ssize_t rec_ring_region_show(struct device *dev,
+static ssize_t rec_ring_enable_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct cndm_dev *cdev = dev_get_drvdata(dev);
+	u32 ctrl;
 
-	if (!cdev || !cdev->rec_ring_virt)
+	if (!cdev || !cdev->rec_ring_regs)
 		return -ENODEV;
 
-	return sysfs_emit(buf, "%u\n", CNDM_REC_RING_REGION);
+	ctrl = ioread32(cdev->hw_addr + CNDM_REC_RING_REG_CTRL);
+	return sysfs_emit(buf, "%u\n", ctrl & CNDM_REC_RING_CTRL_ENABLE);
 }
-static DEVICE_ATTR_RO(rec_ring_region);
+static ssize_t rec_ring_enable_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct cndm_dev *cdev = dev_get_drvdata(dev);
+	bool en;
+
+	if (!cdev || !cdev->rec_ring_regs)
+		return -ENODEV;
+	if (kstrtobool(buf, &en))
+		return -EINVAL;
+
+	iowrite32(en ? CNDM_REC_RING_CTRL_ENABLE : 0,
+			cdev->hw_addr + CNDM_REC_RING_REG_CTRL);
+	return count;
+}
+static DEVICE_ATTR_RW(rec_ring_enable);
 
 static struct attribute *cndm_rec_ring_attrs[] = {
 	&dev_attr_rec_ring_dma_addr.attr,
 	&dev_attr_rec_ring_size.attr,
-	&dev_attr_rec_ring_region.attr,
+	&dev_attr_rec_ring_enable.attr,
 	NULL,
 };
 
@@ -318,6 +335,26 @@ fail_netdev:
 		cdev->rec_ring_group_added = true;
 	}
 
+	if (cdev->rec_ring_virt) {
+		u32 id = ioread32(cdev->hw_addr + CNDM_REC_RING_REG_ID);
+		if (id == CNDM_REC_RING_MAGIC) {
+			cdev->rec_ring_regs = true;
+			iowrite32(0, cdev->hw_addr + CNDM_REC_RING_REG_CTRL);
+			iowrite32((u32)(cdev->rec_ring_dma & 0xffffffff),
+					cdev->hw_addr + CNDM_REC_RING_REG_BASE_LO);
+			iowrite32((u32)((u64)cdev->rec_ring_dma >> 32),
+					cdev->hw_addr + CNDM_REC_RING_REG_BASE_HI);
+			iowrite32(CNDM_REC_RING_CTRL_ENABLE,
+					cdev->hw_addr + CNDM_REC_RING_REG_CTRL);
+			dev_info(dev, "Record ring control present, enabled at 0x%llx",
+					(unsigned long long)cdev->rec_ring_dma);
+		} else {
+			cdev->rec_ring_regs = false;
+			dev_info(dev, "Record ring registers not present in bitstream (id 0x%08x)",
+					id);
+		}
+	}
+
 	cdev->misc_dev.minor = MISC_DYNAMIC_MINOR;
 	cdev->misc_dev.name = cdev->name;
 	cdev->misc_dev.fops = &cndm_fops;
@@ -351,6 +388,11 @@ static void cndm_common_remove(struct cndm_dev *cdev)
 	if (cdev->rec_ring_group_added) {
 		device_remove_group(cdev->dev, &cndm_rec_ring_group);
 		cdev->rec_ring_group_added = false;
+	}
+
+	if (cdev->rec_ring_regs) {
+		iowrite32(0, cdev->hw_addr + CNDM_REC_RING_REG_CTRL);
+		cdev->rec_ring_regs = false;
 	}
 
 	if (cdev->rec_ring_virt) {

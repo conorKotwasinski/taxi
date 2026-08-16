@@ -21,7 +21,7 @@ static void usage(const char *p) {
         "  <ring-file>  mmap'd DMA ring buffer, e.g. /dev/cndm0 or a dump file\n"
         "  [entries]    ring entry count (default %d)\n"
         "  --region N   cndm mmap region index (default 0; the driver's\n"
-        "               record ring is the index in rec_ring_region)\n"
+        "               record ring is the index the ioctl reports)\n"
         "  --count N    consume N records then exit (for fixtures/tests);\n"
         "               also exits on the first empty slot\n"
         "  --size-from  read entry count from a rec_ring_size sysfs file\n"

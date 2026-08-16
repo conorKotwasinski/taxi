@@ -55,6 +55,7 @@ struct cndm_dev {
 	void *rec_ring_virt;
 	dma_addr_t rec_ring_dma;
 	size_t rec_ring_size;
+	bool rec_ring_regs;
 	bool rec_ring_group_added;
 
 	struct mutex mbox_lock;
