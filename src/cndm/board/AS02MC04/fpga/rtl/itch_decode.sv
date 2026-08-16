@@ -391,8 +391,6 @@ module itch_decode #
         bidx_reg       <= bidx_next;
         frame_done_reg <= frame_done_next;
 
-        overflow_reg <= 1'b0;
-
         trig_valid_reg  <= 1'b0;
 
         if (upd_pending_reg) begin
@@ -717,10 +715,15 @@ module itch_decode #
             seq_reg         <= '0;
             delta_ovf_reg   <= 1'b0;
             delta_ovf_cnt   <= '0;
+            overflow_reg    <= 1'b0;
             for (int i = 0; i < LAD_N; i++)
                 lad_v[i] <= 1'b0;
             for (int o = 0; o < ORDER_COUNT; o++)
                 ord_valid[o] <= 1'b0;
+            for (int t = 0; t < SYM_COUNT; t++) begin
+                tob_bid_px[t] <= '0; tob_bid_q[t] <= '0;
+                tob_ask_px[t] <= '0; tob_ask_q[t] <= '0;
+            end
         end
     end
 

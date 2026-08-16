@@ -4,6 +4,7 @@ import struct
 import sys
 
 import cocotb_test.simulator
+import pytest
 
 import cocotb
 from cocotb.clock import Clock
@@ -13,6 +14,7 @@ from cocotbext.axi import AxiStreamBus, AxiStreamSource, AxiStreamSink, AxiStrea
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'fpga_core'))
 import itch
+import itch_gen
 
 SYMBOLS = ['AAPL', 'MSFT', 'NVDA', 'AMZN']
 SYM_ID = {s: i for i, s in enumerate(SYMBOLS)}
@@ -64,7 +66,7 @@ class TB:
         await self.source.send(frame)
 
         await self.source.wait()
-        for _ in range(8):
+        for _ in range(40):
             await RisingEdge(self.dut.clk)
 
     async def read_tob(self, sym_id):
@@ -260,6 +262,82 @@ async def run_test_latency(dut):
     assert lmin <= last <= lmax, "last outside [min,max]"
     assert lmax < 4096, "latency implausibly large"
 
+
+@cocotb.test()
+async def run_test_equivalence(dut):
+    tb = TB(dut)
+    await tb.reset()
+
+    bodies = itch_gen.gen_stress_bodies(SYMBOLS, n_msgs=300, seed=5,
+                                        levels=int(os.environ.get('PARAM_LEVELS', 16)))
+    book = itch.ItchBook(symbols=SYMBOLS)
+
+    ts = 0x100
+    checked = 0
+    for bi, body in enumerate(bodies):
+        await tb.send_stream(itch._framed(body), ts=ts)
+        ts += 1
+        book.apply(itch.parse_message(body))
+
+        for name in SYMBOLS:
+            got = await tb.read_tob(SYM_ID[name])
+            exp = book.top_of_book(name)
+            assert got == exp, (
+                f"msg {bi} ({body[0:1]!r}) {name}: dut={got} golden={exp}")
+            checked += 1
+
+    tb.log.info("equivalence: %d messages, %d book comparisons, all match",
+                len(bodies), checked)
+    assert checked > 0
+
+
+@cocotb.test()
+async def run_test_depth_equivalence(dut):
+    tb = TB(dut)
+    await tb.reset()
+
+    levels = int(os.environ.get('PARAM_LEVELS', 16))
+    bodies = itch_gen.gen_depth_bodies(SYMBOLS, n_msgs=400, seed=9, levels=levels)
+    book = itch.ItchBook(symbols=SYMBOLS)
+
+    ts = 0x200
+    checked = 0
+    ovf_seen = 0
+    for bi, body in enumerate(bodies):
+        await tb.send_stream(itch._framed(body), ts=ts)
+        ts += 1
+        ovf_seen |= int(dut.ladder_overflow.value)
+        book.apply(itch.parse_message(body))
+        for name in SYMBOLS:
+            got = await tb.read_tob(SYM_ID[name])
+            exp = book.top_of_book(name)
+            assert got == exp, (
+                f"msg {bi} ({body[0:1]!r}) {name}: dut={got} golden={exp}")
+            checked += 1
+
+    assert ovf_seen == 0, "unexpected overflow on a full-but-legal ladder"
+    tb.log.info("depth equivalence: levels=%d, %d messages, %d comparisons, all match",
+                levels, len(bodies), checked)
+    assert checked > 0
+
+
+@cocotb.test()
+async def run_test_overflow(dut):
+    tb = TB(dut)
+    await tb.reset()
+
+    levels = int(os.environ.get('PARAM_LEVELS', 16))
+    bodies = itch_gen.gen_depth_bodies(SYMBOLS, n_msgs=400, seed=13,
+                                       levels=levels, overflow=True)
+    ovf_seen = 0
+    for body in bodies:
+        await tb.send_stream(itch._framed(body), ts=0x300)
+        ovf_seen |= int(dut.ladder_overflow.value)
+
+    assert ovf_seen == 1, \
+        "ladder_overflow never asserted despite >LEVELS distinct prices"
+    tb.log.info("overflow asserted at levels=%d as expected", levels)
+
 tests_dir = os.path.abspath(os.path.dirname(__file__))
 rtl_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'rtl'))
 lib_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'lib'))
@@ -277,7 +355,8 @@ def process_f_files(files):
             lst[os.path.basename(f)] = f
     return list(lst.values())
 
-def test_itch_decode(request):
+@pytest.mark.parametrize("levels", [8, 16])
+def test_itch_decode(request, levels):
     dut = "itch_decode"
     module = os.path.splitext(os.path.basename(__file__))[0]
     toplevel = module
@@ -293,7 +372,7 @@ def test_itch_decode(request):
     parameters = {}
     parameters['DATA_W'] = 8
     parameters['SYM_COUNT'] = len(SYMBOLS) if len(SYMBOLS) > 1 else 2
-    parameters['LEVELS'] = 8
+    parameters['LEVELS'] = levels
     parameters['ORDER_COUNT'] = 4096
     parameters['PRICE_W'] = 32
     parameters['QTY_W'] = 32
