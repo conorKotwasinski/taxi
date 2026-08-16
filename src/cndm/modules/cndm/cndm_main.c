@@ -391,7 +391,20 @@ static void cndm_common_remove(struct cndm_dev *cdev)
 	}
 
 	if (cdev->rec_ring_regs) {
+		int i;
+
 		iowrite32(0, cdev->hw_addr + CNDM_REC_RING_REG_CTRL);
+
+		for (i = 0; i < 100; i++) {
+			if (!(ioread32(cdev->hw_addr + CNDM_REC_RING_REG_CTRL) &
+					CNDM_REC_RING_CTRL_ENABLE))
+				break;
+			udelay(10);
+		}
+		if (i == 100)
+			dev_warn(cdev->dev, "Record ring did not disable before teardown");
+
+		msleep(25);
 		cdev->rec_ring_regs = false;
 	}
 
