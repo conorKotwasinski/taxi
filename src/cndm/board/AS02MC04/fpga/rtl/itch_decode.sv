@@ -314,7 +314,38 @@ module itch_decode #
             end
         end
 
-        if (istate_reg != I_WAIT && (res_cnt != 8'd0 || beat)) begin
+        if (istate_reg == I_MSG_BODY && (res_cnt != 8'd0 || beat)) begin
+            automatic logic [7:0] navail = (res_cnt != 8'd0) ? res_cnt : 8'(LANES);
+            automatic logic [15:0] rem_big = |msg_rem_reg[15:$clog2(LANES)+1] ? 16'(LANES) : msg_rem_reg;
+            automatic logic [7:0] n_body = (rem_big < 16'(navail)) ? rem_big[7:0] : navail;
+            res_cnt_n = 8'd0;
+            for (int l = 0; l < LANES; l = l + 1)
+                if (8'(l) < n_body) begin
+                    msg_buf_wr[l]  = 1'b1;
+                    msg_buf_widx[l]= BIDX_W'(bidx_reg + BIDX_W'(l));
+                    msg_buf_wb[l]  = (res_cnt != 8'd0) ? res_b[l]
+                                                       : s_axis_rx.tdata[l*8 +: 8];
+                end
+            bidx_next    = BIDX_W'(bidx_reg + BIDX_W'(n_body));
+            msg_rem_next = msg_rem_reg - 16'(n_body);
+            if (msg_rem_reg <= 16'(n_body)) begin
+                istate_next    = I_WAIT;
+                msg_ready_next = 1'b1;
+                if (!(beat && s_axis_rx.tlast) && res_cnt == 8'd0) begin
+                    res_cnt_n = navail - n_body;
+                    for (int k = 0; k < LANES; k = k + 1)
+                        res_b_n[k] = ((8'(k) + n_body) < navail)
+                                   ? s_axis_rx.tdata[((k + int'(n_body)) % LANES)*8 +: 8]
+                                   : 8'd0;
+                end
+            end
+
+            if (beat && s_axis_rx.tlast) begin
+                frame_done_next = 1'b1;
+                if (istate_next != I_WAIT)
+                    istate_next = I_IDLE;
+            end
+        end else if (istate_reg != I_WAIT && (res_cnt != 8'd0 || beat)) begin
             automatic logic stop = 1'b0;
             automatic logic [7:0] navail = (res_cnt != 8'd0) ? res_cnt : 8'(LANES);
             res_cnt_n = 8'd0;
