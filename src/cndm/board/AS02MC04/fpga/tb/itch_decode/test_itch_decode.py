@@ -286,6 +286,42 @@ async def run_test_straddle(dut):
     assert got == exp, f"straddle: dut={got} golden={exp}"
 
 
+@cocotb.test(skip=not os.environ.get('ITCH_REPLAY_BIN'))
+async def run_test_pcap_replay(dut):
+    tb = TB(dut)
+    await tb.reset()
+
+    path = os.environ['ITCH_REPLAY_BIN']
+    with open(path, 'rb') as f:
+        data = f.read()
+    bodies = list(itch.iter_binaryfile(data))
+
+    book = itch.ItchBook(symbols=SYMBOLS)
+    ts = 0x1000
+    applied = 0
+    for body in bodies:
+        m = itch.parse_message(body)
+        if m is None:
+            continue
+        await tb.send_stream(itch._framed(body), ts=ts & 0xffffffffffff)
+        ts += 1
+        book.apply(m)
+        applied += 1
+
+    ovf = int(dut.ladder_overflow.value) if hasattr(dut, 'ladder_overflow') else 0
+    matches = 0
+    for name in SYMBOLS:
+        got = await tb.read_tob(SYM_ID[name])
+        exp = book.top_of_book(name)
+        if got == exp:
+            matches += 1
+        tb.log.info("replay %s: dut=%r golden=%r %s",
+                    name, got, exp, "OK" if got == exp else "DIVERGED")
+    tb.log.info("replay: %d messages applied, %d/%d tracked symbols match, ladder_overflow=%d",
+                applied, matches, len(SYMBOLS), ovf)
+    assert applied > 0, "no messages replayed from pcap stream"
+
+
 @cocotb.test()
 async def run_test_equivalence(dut):
     tb = TB(dut)
