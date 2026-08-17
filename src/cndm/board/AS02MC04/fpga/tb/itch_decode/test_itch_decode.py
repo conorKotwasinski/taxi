@@ -264,6 +264,29 @@ async def run_test_latency(dut):
 
 
 @cocotb.test()
+async def run_test_straddle(dut):
+    tb = TB(dut)
+    await tb.reset()
+    mk = itch._mk
+    framed = itch._framed
+
+    stream = framed(
+        mk('A', ref=1, side='B', shares=100, stock='AAPL', price=1500000),
+        mk('A', ref=2, side='S', shares=200, stock='AAPL', price=1500100),
+        mk('D', ref=1),
+        mk('D', ref=2),
+    )
+    book = itch.build_book(stream, symbols=SYMBOLS)
+
+    await tb.send_stream(stream, ts=0x55)
+
+    got = await tb.read_tob(SYM_ID['AAPL'])
+    exp = book.top_of_book('AAPL')
+    tb.log.info("straddle: dut=%r golden=%r", got, exp)
+    assert got == exp, f"straddle: dut={got} golden={exp}"
+
+
+@cocotb.test()
 async def run_test_equivalence(dut):
     tb = TB(dut)
     await tb.reset()
