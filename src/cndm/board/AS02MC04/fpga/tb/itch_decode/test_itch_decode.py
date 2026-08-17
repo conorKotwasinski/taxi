@@ -447,8 +447,9 @@ def process_f_files(files):
             lst[os.path.basename(f)] = f
     return list(lst.values())
 
+@pytest.mark.parametrize("data_w", [8, 32])
 @pytest.mark.parametrize("levels", [8, 16])
-def test_itch_decode(request, levels):
+def test_itch_decode(request, levels, data_w):
     dut = "itch_decode"
     module = os.path.splitext(os.path.basename(__file__))[0]
     toplevel = module
@@ -462,7 +463,7 @@ def test_itch_decode(request, levels):
     verilog_sources = process_f_files(verilog_sources)
 
     parameters = {}
-    parameters['DATA_W'] = 8
+    parameters['DATA_W'] = data_w
     parameters['SYM_COUNT'] = len(SYMBOLS) if len(SYMBOLS) > 1 else 2
     parameters['LEVELS'] = levels
     parameters['ORDER_COUNT'] = 4096

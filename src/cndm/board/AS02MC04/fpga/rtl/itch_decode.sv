@@ -107,6 +107,10 @@ module itch_decode #
 
     wire       beat = s_axis_rx.tvalid && s_axis_rx.tready;
 
+    logic [7:0]  res_b [0:LANES-1];
+    logic [7:0]  res_b_n [0:LANES-1];
+    logic [7:0]  res_cnt, res_cnt_n;
+
     wire [7:0]  w_type   = msg_buf[0];
 
     wire [ORDER_REF_W-1:0] w_ref =
@@ -182,7 +186,7 @@ module itch_decode #
     wire decoding = (state_reg == STATE_DECODE) || (state_reg == STATE_SEARCH) ||
                     (state_reg == STATE_APPLY)  || (state_reg == STATE_WRITE)  ||
                     (state_reg == STATE_SCAN)   || (state_reg == STATE_PUB);
-    assign s_axis_rx.tready = !decoding;
+    assign s_axis_rx.tready = !decoding && (res_cnt == 8'd0);
 
     logic              emit_active_reg;
     logic [1:0]        beat_idx_reg;
@@ -266,6 +270,9 @@ module itch_decode #
             msg_buf_widx[l] = '0;
             msg_buf_wb[l]   = '0;
         end
+        res_cnt_n = res_cnt;
+        for (int l = 0; l < LANES; l = l + 1)
+            res_b_n[l] = res_b[l];
 
         if (state_reg == STATE_DECODE)
             state_next = STATE_SEARCH;
@@ -291,9 +298,14 @@ module itch_decode #
             end
         end
 
-        if (beat) begin
+        if (!decoding && (res_cnt != 8'd0 || beat)) begin
+            automatic logic stop = 1'b0;
+            automatic logic [7:0] navail = (res_cnt != 8'd0) ? res_cnt : 8'(LANES);
+            res_cnt_n = 8'd0;
             for (int l = 0; l < LANES; l = l + 1) begin
-                automatic logic [7:0] cb = s_axis_rx.tdata[l*8 +: 8];
+                automatic logic [7:0] cb = (res_cnt != 8'd0) ? res_b[l]
+                                                             : s_axis_rx.tdata[l*8 +: 8];
+                if (!stop && l < navail) begin
                 case (state_next)
                 STATE_IDLE: begin
                     ts_next   = s_axis_rx.tuser[1 +: TS_W];
@@ -334,9 +346,17 @@ module itch_decode #
                     msg_buf_widx[l]= bidx_next;
                     msg_buf_wb[l]  = cb;
                     bidx_next = bidx_next + 1;
-                    if (msg_rem_next == 16'd1)
+                    if (msg_rem_next == 16'd1) begin
                         state_next = STATE_DECODE;
-                    else
+                        stop = 1'b1;
+                        if (!(beat && s_axis_rx.tlast) && res_cnt == 8'd0) begin
+                            res_cnt_n = (navail - 8'(l) - 8'd1);
+                            for (int k = 0; k < LANES; k = k + 1)
+                                res_b_n[k] = ((8'(k) + 8'(l) + 8'd1) < navail)
+                                           ? s_axis_rx.tdata[((l+1+k) % LANES)*8 +: 8]
+                                           : 8'd0;
+                        end
+                    end else
                         msg_rem_next = msg_rem_next - 1;
                 end
                 STATE_DRAIN: begin
@@ -344,14 +364,18 @@ module itch_decode #
                 end
                 default: ;
                 endcase
+                end
             end
 
-            if (s_axis_rx.tlast) begin
+            if (beat && s_axis_rx.tlast) begin
                 frame_done_next = 1'b1;
                 if (state_next != STATE_DECODE)
                     state_next = STATE_IDLE;
             end
         end
+
+        if (state_next == STATE_IDLE)
+            res_cnt_n = 8'd0;
 
         if (state_next == STATE_IDLE)
             frame_done_next = 1'b0;
@@ -412,6 +436,9 @@ module itch_decode #
         lencnt_reg     <= lencnt_next;
         msg_len_reg    <= msg_len_next;
         msg_rem_reg    <= msg_rem_next;
+        res_cnt        <= res_cnt_n;
+        for (int l = 0; l < LANES; l = l + 1)
+            res_b[l]   <= res_b_n[l];
         bidx_reg       <= bidx_next;
         frame_done_reg <= frame_done_next;
 
@@ -462,7 +489,7 @@ module itch_decode #
                 beat_idx_reg <= beat_idx_reg + 1;
         end
 
-        if (beat)
+        if (!decoding && (res_cnt != 8'd0 || beat))
             for (int l = 0; l < LANES; l = l + 1)
                 if (msg_buf_wr[l])
                     msg_buf[msg_buf_widx[l]] <= msg_buf_wb[l];
@@ -753,6 +780,7 @@ module itch_decode #
             skip_reg       <= '0;
             lencnt_reg     <= 2'd2;
             msg_rem_reg    <= '0;
+            res_cnt        <= 8'd0;
             bidx_reg       <= '0;
             frame_done_reg <= 1'b0;
             trig_valid_reg  <= 1'b0;
