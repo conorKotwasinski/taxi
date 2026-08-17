@@ -223,6 +223,10 @@ module itch_decode #
     wire [PRICE_W-1:0] tsym_bid_px = tob_bid_px[upd_sym_reg];
     wire [PRICE_W-1:0] tsym_ask_px = tob_ask_px[upd_sym_reg];
 
+    wire inc_is_best = inc_side ? (inc_px == tsym_ask_px && tsym_ask_q != 0)
+                                : (inc_px == tsym_bid_px && tsym_bid_q != 0);
+    wire need_rescan = !inc_ok || (inc_is_best && inc_newq == 0);
+
     logic              trig_valid_reg;
     logic [SYM_AW-1:0] trig_sym_reg;
     logic              trig_side_reg;
@@ -265,7 +269,7 @@ module itch_decode #
             state_next = STATE_WRITE;
 
         if (state_reg == STATE_WRITE)
-            state_next = STATE_SCAN;
+            state_next = need_rescan ? STATE_SCAN : STATE_PUB;
 
         if (state_reg == STATE_SCAN && scan_i == (LVL_AW+1)'(LEVELS))
             state_next = STATE_PUB;
@@ -366,6 +370,11 @@ module itch_decode #
     logic [QTY_W-1:0]   rd_qb,  rd_qa;
     logic [PRICE_W-1:0] scan_bpx, scan_apx;
     logic [QTY_W-1:0]   scan_bq,  scan_aq;
+
+    logic               inc_ok;
+    logic               inc_side;
+    logic [PRICE_W-1:0] inc_px;
+    logic [QTY_W-1:0]   inc_newq;
 
     logic [QTY_W-1:0] rpl_q;
 
@@ -530,6 +539,10 @@ module itch_decode #
             wrA_idx  <= d_base + 32'(slot_a);
             wrB_idx  <= d_base + 32'(slot_b);
 
+            inc_ok   <= 1'b0;
+            inc_side <= d_side ? 1'b0 : 1'b1;
+            inc_px   <= d_px_a;
+
             case (d_type)
                 T_ADD, T_ADD_MPID: begin
                     if (d_sym_tracked) begin
@@ -543,11 +556,15 @@ module itch_decode #
                         if (slot_a != (LVL_AW+1)'(LEVELS)) begin
                             wrA_q_en <= 1'b1;
                             wrA_q    <= slot_a_q + d_shares;
+                            inc_ok   <= 1'b1;
+                            inc_newq <= slot_a_q + d_shares;
                         end else if (slot_free != (LVL_AW+1)'(LEVELS)) begin
                             wrA_idx  <= d_base + 32'(slot_free);
                             wrA_v_en <= 1'b1; wrA_v <= 1'b1;
                             wrA_px_en<= 1'b1; wrA_px <= d_px_a;
                             wrA_q_en <= 1'b1; wrA_q  <= d_shares;
+                            inc_ok   <= 1'b1;
+                            inc_newq <= d_shares;
                         end else begin
                             overflow_reg <= 1'b1;
                         end
@@ -563,8 +580,10 @@ module itch_decode #
                         if (slot_a != (LVL_AW+1)'(LEVELS)) begin
                             if (slot_a_q <= d_take) begin
                                 wrA_v_en <= 1'b1; wrA_v <= 1'b0;
+                                inc_ok   <= 1'b1; inc_newq <= '0;
                             end else begin
                                 wrA_q_en <= 1'b1; wrA_q <= slot_a_q - d_take;
+                                inc_ok   <= 1'b1; inc_newq <= slot_a_q - d_take;
                             end
                         end
                         upd_valid_reg <= 1'b1;
@@ -577,8 +596,10 @@ module itch_decode #
                         if (slot_a != (LVL_AW+1)'(LEVELS)) begin
                             if (slot_a_q <= d_l_qty) begin
                                 wrA_v_en <= 1'b1; wrA_v <= 1'b0;
+                                inc_ok   <= 1'b1; inc_newq <= '0;
                             end else begin
                                 wrA_q_en <= 1'b1; wrA_q <= slot_a_q - d_l_qty;
+                                inc_ok   <= 1'b1; inc_newq <= slot_a_q - d_l_qty;
                             end
                         end
                         upd_valid_reg <= 1'b1;
@@ -600,8 +621,10 @@ module itch_decode #
                                 rpl_q = slot_a_q - d_l_qty + d_shares;
                                 if (rpl_q == 0) begin
                                     wrA_v_en <= 1'b1; wrA_v <= 1'b0;
+                                    inc_ok   <= 1'b1; inc_newq <= '0;
                                 end else begin
                                     wrA_q_en <= 1'b1; wrA_q <= rpl_q;
+                                    inc_ok   <= 1'b1; inc_newq <= rpl_q;
                                 end
                             end
                         end else begin
@@ -644,6 +667,24 @@ module itch_decode #
             if (wrB_v_en)  lad_v [wrB_idx] <= wrB_v;
             if (wrB_px_en) lad_px[wrB_idx] <= wrB_px;
             if (wrB_q_en)  lad_q [wrB_idx] <= wrB_q;
+
+            if (!need_rescan) begin
+                scan_bpx <= tsym_bid_px; scan_bq <= tsym_bid_q;
+                scan_apx <= tsym_ask_px; scan_aq <= tsym_ask_q;
+                if (inc_ok && inc_newq != 0) begin
+                    if (!inc_side) begin
+                        if (tsym_bid_q == 0 || inc_px > tsym_bid_px
+                                || inc_px == tsym_bid_px) begin
+                            scan_bpx <= inc_px; scan_bq <= inc_newq;
+                        end
+                    end else begin
+                        if (tsym_ask_q == 0 || inc_px < tsym_ask_px
+                                || inc_px == tsym_ask_px) begin
+                            scan_apx <= inc_px; scan_aq <= inc_newq;
+                        end
+                    end
+                end
+            end
         end
 
         STATE_SCAN: begin

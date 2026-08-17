@@ -338,6 +338,39 @@ async def run_test_overflow(dut):
         "ladder_overflow never asserted despite >LEVELS distinct prices"
     tb.log.info("overflow asserted at levels=%d as expected", levels)
 
+
+@cocotb.test()
+async def run_test_fastpath_faster(dut):
+    tb = TB(dut)
+    await tb.reset()
+    mk = itch._mk
+
+    # build a book: best bid = 1500300 (ref4), a lower level 1500000 has two orders
+    setup = itch._framed(
+        mk('A', ref=1, side='B', shares=100, stock='AAPL', price=1500000),
+        mk('A', ref=2, side='B', shares=100, stock='AAPL', price=1500000),
+        mk('A', ref=3, side='B', shares=100, stock='AAPL', price=1500100),
+        mk('A', ref=4, side='B', shares=100, stock='AAPL', price=1500300),
+        mk('A', ref=5, side='S', shares=100, stock='AAPL', price=1500500),
+    )
+    await tb.send_stream(setup, ts=0x10)
+
+    # fast path: Delete ref1 -- level 1500000 still has ref2, not the best,
+    # best unchanged -> no rescan
+    await tb.send_stream(itch._framed(mk('D', ref=1)), ts=0x11)
+    fast_cyc = int(dut.dbg_lat_last.value)
+
+    # slow path: Delete ref4 -- empties the best level -> full rescan.
+    # same message type/length as the fast case, so the cycle delta is the
+    # search path alone, not ingestion.
+    await tb.send_stream(itch._framed(mk('D', ref=4)), ts=0x12)
+    slow_cyc = int(dut.dbg_lat_last.value)
+
+    tb.log.info("fast-path(D) cycles=%d, rescan(D) cycles=%d", fast_cyc, slow_cyc)
+    assert fast_cyc > 0 and slow_cyc > 0
+    assert slow_cyc > fast_cyc, (
+        f"fast path not faster than rescan: fast={fast_cyc} rescan={slow_cyc}")
+
 tests_dir = os.path.abspath(os.path.dirname(__file__))
 rtl_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'rtl'))
 lib_dir = os.path.abspath(os.path.join(tests_dir, '..', '..', 'lib'))
