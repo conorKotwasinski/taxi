@@ -45,12 +45,13 @@ module itch_decode #
 );
 
     localparam DATA_W   = s_axis_rx.DATA_W;
+    localparam LANES    = DATA_W/8;
     localparam SYM_AW   = $clog2(SYM_COUNT);
     localparam ORDER_AW = $clog2(ORDER_COUNT);
     localparam LVL_AW   = $clog2(LEVELS);
 
-    if (DATA_W != 8)
-        $fatal(0, "itch_decode: decode bus is 8-bit (instance %m)");
+    if (DATA_W % 8 != 0)
+        $fatal(0, "itch_decode: decode bus must be a multiple of 8 bits (instance %m)");
 
     localparam MSG_BUF_N = 64;
     localparam BIDX_W    = $clog2(MSG_BUF_N);
@@ -100,8 +101,10 @@ module itch_decode #
     logic              frame_done_reg, frame_done_next;
 
     logic [7:0] msg_buf [0:MSG_BUF_N-1];
+    logic              msg_buf_wr   [0:LANES-1];
+    logic [BIDX_W-1:0] msg_buf_widx [0:LANES-1];
+    logic [7:0]        msg_buf_wb   [0:LANES-1];
 
-    wire [7:0] rx_b = s_axis_rx.tdata[7:0];
     wire       beat = s_axis_rx.tvalid && s_axis_rx.tready;
 
     wire [7:0]  w_type   = msg_buf[0];
@@ -258,6 +261,11 @@ module itch_decode #
         msg_rem_next     = msg_rem_reg;
         bidx_next        = bidx_reg;
         frame_done_next  = frame_done_reg;
+        for (int l = 0; l < LANES; l = l + 1) begin
+            msg_buf_wr[l]   = 1'b0;
+            msg_buf_widx[l] = '0;
+            msg_buf_wb[l]   = '0;
+        end
 
         if (state_reg == STATE_DECODE)
             state_next = STATE_SEARCH;
@@ -284,7 +292,9 @@ module itch_decode #
         end
 
         if (beat) begin
-            case (state_reg)
+            for (int l = 0; l < LANES; l = l + 1) begin
+                automatic logic [7:0] cb = s_axis_rx.tdata[l*8 +: 8];
+                case (state_next)
                 STATE_IDLE: begin
                     ts_next   = s_axis_rx.tuser[1 +: TS_W];
                     bad_next  = s_axis_rx.tuser[0];
@@ -297,39 +307,44 @@ module itch_decode #
                     end
                 end
                 STATE_SKIP_HDR: begin
-                    if (skip_reg <= 1) begin
+                    if (skip_next <= 1) begin
                         state_next  = STATE_MSG_LEN;
                         lencnt_next = 2'd2;
                     end else begin
-                        skip_next = skip_reg - 1;
+                        skip_next = skip_next - 1;
                     end
                 end
                 STATE_MSG_LEN: begin
-                    msg_len_next = {msg_len_reg[7:0], rx_b};
-                    if (lencnt_reg == 2'd1) begin
-                        if ({msg_len_reg[7:0], rx_b} == 16'd0) begin
+                    automatic logic [15:0] mlen = {msg_len_next[7:0], cb};
+                    msg_len_next = mlen;
+                    if (lencnt_next == 2'd1) begin
+                        if (mlen == 16'd0) begin
                             state_next = STATE_DRAIN;
                         end else begin
-                            msg_rem_next = {msg_len_reg[7:0], rx_b};
+                            msg_rem_next = mlen;
                             bidx_next    = '0;
                             state_next   = STATE_MSG_BODY;
                         end
                     end else begin
-                        lencnt_next = lencnt_reg - 1;
+                        lencnt_next = lencnt_next - 1;
                     end
                 end
                 STATE_MSG_BODY: begin
-                    bidx_next = bidx_reg + 1;
-                    if (msg_rem_reg == 16'd1)
+                    msg_buf_wr[l]  = 1'b1;
+                    msg_buf_widx[l]= bidx_next;
+                    msg_buf_wb[l]  = cb;
+                    bidx_next = bidx_next + 1;
+                    if (msg_rem_next == 16'd1)
                         state_next = STATE_DECODE;
                     else
-                        msg_rem_next = msg_rem_reg - 1;
+                        msg_rem_next = msg_rem_next - 1;
                 end
                 STATE_DRAIN: begin
                     state_next = STATE_DRAIN;
                 end
-                default: state_next = STATE_IDLE;
-            endcase
+                default: ;
+                endcase
+            end
 
             if (s_axis_rx.tlast) begin
                 frame_done_next = 1'b1;
@@ -447,8 +462,10 @@ module itch_decode #
                 beat_idx_reg <= beat_idx_reg + 1;
         end
 
-        if (beat && state_reg == STATE_MSG_BODY)
-            msg_buf[bidx_reg] <= rx_b;
+        if (beat)
+            for (int l = 0; l < LANES; l = l + 1)
+                if (msg_buf_wr[l])
+                    msg_buf[msg_buf_widx[l]] <= msg_buf_wb[l];
 
         if (beat && state_reg == STATE_IDLE)
             t0_cyc <= cyc_cnt;
