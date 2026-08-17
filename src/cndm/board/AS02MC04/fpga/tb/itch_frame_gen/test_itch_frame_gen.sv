@@ -65,6 +65,7 @@ uut (
     .axis_mon(axis_loop),
     .m_axis_delta(axis_delta),
     .ladder_overflow(ladder_overflow),
+    .dbg_delta_ovf(),
     .fifo_overflow(fifo_overflow),
     .cfg_imbalance_thresh('0),
     .trig_valid(),
