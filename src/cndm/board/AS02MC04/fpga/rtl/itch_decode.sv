@@ -74,6 +74,7 @@ module itch_decode #
         STATE_SKIP_HDR,
         STATE_MSG_LEN,
         STATE_MSG_BODY,
+        STATE_LOOKUP,
         STATE_DECODE,
         STATE_SEARCH,
         STATE_APPLY,
@@ -149,11 +150,18 @@ module itch_decode #
     wire [ORDER_AW-1:0] ref_h     = w_ref[ORDER_AW-1:0];
     wire [ORDER_AW-1:0] new_ref_h = w_new_ref[ORDER_AW-1:0];
 
-    wire                 l_hit  = ord_valid[ref_h] && (ord_tag[ref_h] == w_ref);
-    wire [SYM_AW-1:0]    l_sym  = ord_sym[ref_h];
-    wire                 l_side = ord_side[ref_h];
-    wire [PRICE_W-1:0]   l_px   = ord_px[ref_h];
-    wire [QTY_W-1:0]     l_qty  = ord_qty[ref_h];
+    logic [ORDER_REF_W-1:0] rd_tag;
+    logic                   rd_valid;
+    logic [SYM_AW-1:0]      rd_sym;
+    logic                   rd_side;
+    logic [PRICE_W-1:0]     rd_px;
+    logic [QTY_W-1:0]       rd_qty;
+
+    wire                 l_hit  = rd_valid && (rd_tag == w_ref);
+    wire [SYM_AW-1:0]    l_sym  = rd_sym;
+    wire                 l_side = rd_side;
+    wire [PRICE_W-1:0]   l_px   = rd_px;
+    wire [QTY_W-1:0]     l_qty  = rd_qty;
     wire [QTY_W-1:0]     l_take = (l_qty < w_shares_exec) ? l_qty : w_shares_exec;
 
     localparam LAD_N = SYM_COUNT * 2 * LEVELS;
@@ -176,7 +184,8 @@ module itch_decode #
     wire [PRICE_W-1:0] scan_ask_px = tob_ask_px[dbg_sym];
     wire [QTY_W-1:0]   scan_ask_q  = tob_ask_q [dbg_sym];
 
-    wire decoding = (state_reg == STATE_DECODE) || (state_reg == STATE_SEARCH) ||
+    wire decoding = (state_reg == STATE_LOOKUP) || (state_reg == STATE_DECODE) ||
+                    (state_reg == STATE_SEARCH) ||
                     (state_reg == STATE_APPLY)  || (state_reg == STATE_WRITE)  ||
                     (state_reg == STATE_SCAN)   || (state_reg == STATE_PUB);
     assign s_axis_rx.tready = !decoding;
@@ -259,6 +268,9 @@ module itch_decode #
         bidx_next        = bidx_reg;
         frame_done_next  = frame_done_reg;
 
+        if (state_reg == STATE_LOOKUP)
+            state_next = STATE_DECODE;
+
         if (state_reg == STATE_DECODE)
             state_next = STATE_SEARCH;
 
@@ -321,7 +333,7 @@ module itch_decode #
                 STATE_MSG_BODY: begin
                     bidx_next = bidx_reg + 1;
                     if (msg_rem_reg == 16'd1)
-                        state_next = STATE_DECODE;
+                        state_next = STATE_LOOKUP;
                     else
                         msg_rem_next = msg_rem_reg - 1;
                 end
@@ -333,7 +345,7 @@ module itch_decode #
 
             if (s_axis_rx.tlast) begin
                 frame_done_next = 1'b1;
-                if (state_next != STATE_DECODE)
+                if (state_next != STATE_DECODE && state_next != STATE_LOOKUP)
                     state_next = STATE_IDLE;
             end
         end
@@ -454,6 +466,15 @@ module itch_decode #
             t0_cyc <= cyc_cnt;
 
         case (state_reg)
+
+        STATE_LOOKUP: begin
+            rd_valid <= ord_valid[ref_h];
+            rd_tag   <= ord_tag  [ref_h];
+            rd_sym   <= ord_sym  [ref_h];
+            rd_side  <= ord_side [ref_h];
+            rd_px    <= ord_px   [ref_h];
+            rd_qty   <= ord_qty  [ref_h];
+        end
 
         STATE_DECODE: begin
             d_type        <= w_type;
@@ -761,6 +782,7 @@ module itch_decode #
                 lad_v[i] <= 1'b0;
             for (int o = 0; o < ORDER_COUNT; o++)
                 ord_valid[o] <= 1'b0;
+            rd_valid <= 1'b0;
             for (int t = 0; t < SYM_COUNT; t++) begin
                 tob_bid_px[t] <= '0; tob_bid_q[t] <= '0;
                 tob_ask_px[t] <= '0; tob_ask_q[t] <= '0;
