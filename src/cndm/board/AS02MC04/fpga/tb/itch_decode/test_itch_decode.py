@@ -447,7 +447,7 @@ def process_f_files(files):
             lst[os.path.basename(f)] = f
     return list(lst.values())
 
-@pytest.mark.parametrize("data_w", [8, 32])
+@pytest.mark.parametrize("data_w", [8, 16, 32])
 @pytest.mark.parametrize("levels", [8, 16])
 def test_itch_decode(request, levels, data_w):
     dut = "itch_decode"
