@@ -70,21 +70,28 @@ module itch_decode #
     localparam [63:0] SYM_TICKER2 = "NVDA    ";
     localparam [63:0] SYM_TICKER3 = "AMZN    ";
 
-    typedef enum logic [3:0] {
-        STATE_IDLE,
-        STATE_SKIP_HDR,
-        STATE_MSG_LEN,
-        STATE_MSG_BODY,
-        STATE_DECODE,
-        STATE_SEARCH,
-        STATE_APPLY,
-        STATE_WRITE,
-        STATE_SCAN,
-        STATE_PUB,
-        STATE_DRAIN
-    } state_t;
+    typedef enum logic [2:0] {
+        I_IDLE,
+        I_SKIP_HDR,
+        I_MSG_LEN,
+        I_MSG_BODY,
+        I_WAIT,
+        I_DRAIN
+    } istate_t;
 
-    state_t state_reg = STATE_IDLE, state_next;
+    typedef enum logic [2:0] {
+        D_IDLE,
+        D_DECODE,
+        D_SEARCH,
+        D_APPLY,
+        D_WRITE,
+        D_SCAN,
+        D_PUB
+    } dstate_t;
+
+    istate_t istate_reg = I_IDLE, istate_next;
+    dstate_t dstate_reg = D_IDLE, dstate_next;
+    logic    msg_ready_reg, msg_ready_next;
 
     logic [TS_W-1:0]   ts_reg,       ts_next;
 
@@ -183,10 +190,8 @@ module itch_decode #
     wire [PRICE_W-1:0] scan_ask_px = tob_ask_px[dbg_sym];
     wire [QTY_W-1:0]   scan_ask_q  = tob_ask_q [dbg_sym];
 
-    wire decoding = (state_reg == STATE_DECODE) || (state_reg == STATE_SEARCH) ||
-                    (state_reg == STATE_APPLY)  || (state_reg == STATE_WRITE)  ||
-                    (state_reg == STATE_SCAN)   || (state_reg == STATE_PUB);
-    assign s_axis_rx.tready = !decoding && (res_cnt == 8'd0);
+    wire decoding = (dstate_reg != D_IDLE);
+    assign s_axis_rx.tready = !decoding && (res_cnt == 8'd0) && (istate_reg != I_WAIT);
 
     logic              emit_active_reg;
     logic [1:0]        beat_idx_reg;
@@ -256,7 +261,9 @@ module itch_decode #
     assign ladder_overflow = overflow_reg;
 
     always_comb begin
-        state_next       = state_reg;
+        istate_next      = istate_reg;
+        dstate_next      = dstate_reg;
+        msg_ready_next   = msg_ready_reg;
         ts_next          = ts_reg;
         bad_next         = bad_reg;
         skip_next        = skip_reg;
@@ -274,31 +281,40 @@ module itch_decode #
         for (int l = 0; l < LANES; l = l + 1)
             res_b_n[l] = res_b[l];
 
-        if (state_reg == STATE_DECODE)
-            state_next = STATE_SEARCH;
+        if (dstate_reg == D_IDLE && msg_ready_reg)
+            dstate_next = D_DECODE;
 
-        if (state_reg == STATE_SEARCH && srch_i == (LVL_AW+1)'(LEVELS))
-            state_next = STATE_APPLY;
+        if (dstate_reg == D_DECODE)
+            dstate_next = D_SEARCH;
 
-        if (state_reg == STATE_APPLY)
-            state_next = STATE_WRITE;
+        if (dstate_reg == D_SEARCH && srch_i == (LVL_AW+1)'(LEVELS))
+            dstate_next = D_APPLY;
 
-        if (state_reg == STATE_WRITE)
-            state_next = need_rescan ? STATE_SCAN : STATE_PUB;
+        if (dstate_reg == D_APPLY)
+            dstate_next = D_WRITE;
 
-        if (state_reg == STATE_SCAN && scan_i == (LVL_AW+1)'(LEVELS))
-            state_next = STATE_PUB;
+        if (dstate_reg == D_WRITE)
+            dstate_next = need_rescan ? D_SCAN : D_PUB;
 
-        if (state_reg == STATE_PUB) begin
+        if (dstate_reg == D_SCAN && scan_i == (LVL_AW+1)'(LEVELS))
+            dstate_next = D_PUB;
+
+        if (dstate_reg == D_PUB)
+            dstate_next = D_IDLE;
+
+        if (dstate_reg == D_DECODE)
+            msg_ready_next = 1'b0;
+
+        if (istate_reg == I_WAIT && dstate_reg == D_IDLE && !msg_ready_reg) begin
             if (frame_done_reg)
-                state_next = STATE_IDLE;
+                istate_next = I_IDLE;
             else begin
-                state_next  = STATE_MSG_LEN;
+                istate_next = I_MSG_LEN;
                 lencnt_next = 2'd2;
             end
         end
 
-        if (!decoding && (res_cnt != 8'd0 || beat)) begin
+        if (istate_reg != I_WAIT && (res_cnt != 8'd0 || beat)) begin
             automatic logic stop = 1'b0;
             automatic logic [7:0] navail = (res_cnt != 8'd0) ? res_cnt : 8'(LANES);
             res_cnt_n = 8'd0;
@@ -306,48 +322,49 @@ module itch_decode #
                 automatic logic [7:0] cb = (res_cnt != 8'd0) ? res_b[l]
                                                              : s_axis_rx.tdata[l*8 +: 8];
                 if (!stop && l < navail) begin
-                case (state_next)
-                STATE_IDLE: begin
+                case (istate_next)
+                I_IDLE: begin
                     ts_next   = s_axis_rx.tuser[1 +: TS_W];
                     bad_next  = s_axis_rx.tuser[0];
                     if (HDR_SKIP_BYTES <= 1) begin
-                        state_next  = STATE_MSG_LEN;
+                        istate_next = I_MSG_LEN;
                         lencnt_next = 2'd2;
                     end else begin
-                        state_next = STATE_SKIP_HDR;
-                        skip_next  = 16'(HDR_SKIP_BYTES - 1);
+                        istate_next = I_SKIP_HDR;
+                        skip_next   = 16'(HDR_SKIP_BYTES - 1);
                     end
                 end
-                STATE_SKIP_HDR: begin
+                I_SKIP_HDR: begin
                     if (skip_next <= 1) begin
-                        state_next  = STATE_MSG_LEN;
+                        istate_next = I_MSG_LEN;
                         lencnt_next = 2'd2;
                     end else begin
                         skip_next = skip_next - 1;
                     end
                 end
-                STATE_MSG_LEN: begin
+                I_MSG_LEN: begin
                     automatic logic [15:0] mlen = {msg_len_next[7:0], cb};
                     msg_len_next = mlen;
                     if (lencnt_next == 2'd1) begin
                         if (mlen == 16'd0) begin
-                            state_next = STATE_DRAIN;
+                            istate_next = I_DRAIN;
                         end else begin
                             msg_rem_next = mlen;
                             bidx_next    = '0;
-                            state_next   = STATE_MSG_BODY;
+                            istate_next  = I_MSG_BODY;
                         end
                     end else begin
                         lencnt_next = lencnt_next - 1;
                     end
                 end
-                STATE_MSG_BODY: begin
+                I_MSG_BODY: begin
                     msg_buf_wr[l]  = 1'b1;
                     msg_buf_widx[l]= bidx_next;
                     msg_buf_wb[l]  = cb;
                     bidx_next = bidx_next + 1;
                     if (msg_rem_next == 16'd1) begin
-                        state_next = STATE_DECODE;
+                        istate_next    = I_WAIT;
+                        msg_ready_next = 1'b1;
                         stop = 1'b1;
                         if (!(beat && s_axis_rx.tlast) && res_cnt == 8'd0) begin
                             res_cnt_n = (navail - 8'(l) - 8'd1);
@@ -359,8 +376,8 @@ module itch_decode #
                     end else
                         msg_rem_next = msg_rem_next - 1;
                 end
-                STATE_DRAIN: begin
-                    state_next = STATE_DRAIN;
+                I_DRAIN: begin
+                    istate_next = I_DRAIN;
                 end
                 default: ;
                 endcase
@@ -369,15 +386,15 @@ module itch_decode #
 
             if (beat && s_axis_rx.tlast) begin
                 frame_done_next = 1'b1;
-                if (state_next != STATE_DECODE)
-                    state_next = STATE_IDLE;
+                if (istate_next != I_WAIT)
+                    istate_next = I_IDLE;
             end
         end
 
-        if (state_next == STATE_IDLE)
+        if (istate_next == I_IDLE)
             res_cnt_n = 8'd0;
 
-        if (state_next == STATE_IDLE)
+        if (istate_next == I_IDLE)
             frame_done_next = 1'b0;
     end
 
@@ -427,7 +444,9 @@ module itch_decode #
     logic [QTY_W-1:0]   wrB_q;
 
     always_ff @(posedge clk) begin
-        state_reg      <= state_next;
+        istate_reg     <= istate_next;
+        dstate_reg     <= dstate_next;
+        msg_ready_reg  <= msg_ready_next;
 
         cyc_cnt <= cyc_cnt + 16'd1;
         ts_reg         <= ts_next;
@@ -494,12 +513,12 @@ module itch_decode #
                 if (msg_buf_wr[l])
                     msg_buf[msg_buf_widx[l]] <= msg_buf_wb[l];
 
-        if (beat && state_reg == STATE_IDLE)
+        if (beat && istate_reg == I_IDLE)
             t0_cyc <= cyc_cnt;
 
-        case (state_reg)
+        case (dstate_reg)
 
-        STATE_DECODE: begin
+        D_DECODE: begin
             d_type        <= w_type;
             d_ref         <= w_ref;
             d_ref_h       <= ref_h;
@@ -546,7 +565,7 @@ module itch_decode #
             endcase
         end
 
-        STATE_SEARCH: begin
+        D_SEARCH: begin
             srch_i <= srch_i + 1;
             sr_vld <= (srch_i < (LVL_AW+1)'(LEVELS));
             sr_i   <= srch_i;
@@ -569,7 +588,7 @@ module itch_decode #
             end
         end
 
-        STATE_APPLY: begin
+        D_APPLY: begin
             logic ofree;
             upd_sym_reg   <= d_sym;
             upd_valid_reg <= 1'b0;
@@ -704,7 +723,7 @@ module itch_decode #
             endcase
         end
 
-        STATE_WRITE: begin
+        D_WRITE: begin
             if (wrA_v_en)  lad_v [wrA_idx] <= wrA_v;
             if (wrA_px_en) lad_px[wrA_idx] <= wrA_px;
             if (wrA_q_en)  lad_q [wrA_idx] <= wrA_q;
@@ -731,7 +750,7 @@ module itch_decode #
             end
         end
 
-        STATE_SCAN: begin
+        D_SCAN: begin
             int bb, ab;
             bb = (int'(upd_sym_reg)*2 + 0) * LEVELS;
             ab = (int'(upd_sym_reg)*2 + 1) * LEVELS;
@@ -760,7 +779,7 @@ module itch_decode #
             end
         end
 
-        STATE_PUB: begin
+        D_PUB: begin
             tob_bid_px[upd_sym_reg] <= scan_bpx;
             tob_bid_q [upd_sym_reg] <= scan_bq;
             tob_ask_px[upd_sym_reg] <= scan_apx;
@@ -776,7 +795,9 @@ module itch_decode #
         endcase
 
         if (rst) begin
-            state_reg      <= STATE_IDLE;
+            istate_reg     <= I_IDLE;
+            dstate_reg     <= D_IDLE;
+            msg_ready_reg  <= 1'b0;
             skip_reg       <= '0;
             lencnt_reg     <= 2'd2;
             msg_rem_reg    <= '0;
