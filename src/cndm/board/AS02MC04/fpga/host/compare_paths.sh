@@ -7,6 +7,8 @@ TXIF=${TXIF:-enp1s0d1}
 BIN=${BIN:-/home/conor/fpga/itch-data/real_20k_mid.bin}
 GAP=${GAP:-200}
 OUT=${OUT:-/tmp/itch_compare}
+CLEANUP_VETH=0
+TXIF0=$TXIF
 
 [ "$EUID" -eq 0 ] || { echo "must run as root (sudo $0)"; exit 1; }
 [ -f "$BIN" ] || { echo "missing $BIN"; exit 1; }
@@ -33,12 +35,22 @@ timeout 20 tcpdump -i "$RXIF" -c 3 -nn ether proto 0x88b5 > "$OUT/tcpdump.txt" 2
 TD=$!
 sleep 2; send; wait $TD 2>/dev/null
 if grep -q "3 packets captured" "$OUT/tcpdump.txt"; then
-    echo "  host RX works"
+    echo "  host RX works on $RXIF"
 else
-    echo "  WARNING: frames not seen on $RXIF -- software baselines will hang."
-    sed 's/^/    /' "$OUT/tcpdump.txt" | head -4
-    echo "  (the FPGA path does not depend on host RX; skipping software baselines)"
-    exit 1
+    echo "  $RXIF does not deliver to the host; falling back to a veth pair."
+    echo "  itch_afpacket timestamps at kernel software RX, which already excludes"
+    echo "  the NIC, DMA and PCIe -- so veth exercises the same measured path."
+    ip link del itchv0 2>/dev/null
+    ip link add itchv0 type veth peer name itchv1 || { echo "  veth create failed"; exit 1; }
+    ip link set itchv0 up; ip link set itchv1 up
+    TXIF=itchv0; RXIF=itchv1
+    CLEANUP_VETH=1
+    timeout 20 tcpdump -i "$RXIF" -c 3 -nn ether proto 0x88b5 > "$OUT/tcpdump2.txt" 2>&1 &
+    TD=$!
+    sleep 2; send; wait $TD 2>/dev/null
+    grep -q "3 packets captured" "$OUT/tcpdump2.txt" \
+        && echo "  veth path works ($TXIF -> $RXIF)" \
+        || { echo "  veth path also failed:"; sed 's/^/    /' "$OUT/tcpdump2.txt" | head -4; exit 1; }
 fi
 echo
 
@@ -54,6 +66,9 @@ for tool in itch_afpacket itch_afxdp; do
 done
 
 echo "=== FPGA in-fabric ==="
+echo "  (processed the same $NMSG messages during the sanity-check send on $TXIF0)"
 "$HERE/itch_poll" "$BDF" --count 1 | sed 's/^/  /'
 echo
 echo "raw output in $OUT/"
+[ "$CLEANUP_VETH" = 1 ] && ip link del itchv0 2>/dev/null && echo "removed veth pair"
+exit 0
