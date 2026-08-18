@@ -84,6 +84,7 @@ module itch_decode #
     typedef enum logic [2:0] {
         D_IDLE,
         D_DECODE,
+        D_LOOKUP,
         D_SEARCH,
         D_APPLY,
         D_WRITE,
@@ -161,6 +162,7 @@ module itch_decode #
     logic                    ord_side  [0:ORDER_COUNT-1];
     logic [PRICE_W-1:0]      ord_px    [0:ORDER_COUNT-1];
     logic [QTY_W-1:0]        ord_qty   [0:ORDER_COUNT-1];
+    logic [LVL_AW:0]         ord_slot  [0:ORDER_COUNT-1];
 
     wire [ORDER_AW-1:0] ref_h     = w_ref[ORDER_AW-1:0];
     wire [ORDER_AW-1:0] new_ref_h = w_new_ref[ORDER_AW-1:0];
@@ -170,6 +172,7 @@ module itch_decode #
     wire                 l_side = ord_side[ref_h];
     wire [PRICE_W-1:0]   l_px   = ord_px[ref_h];
     wire [QTY_W-1:0]     l_qty  = ord_qty[ref_h];
+    wire [LVL_AW:0]      l_slot = ord_slot[ref_h];
     wire [QTY_W-1:0]     l_take = (l_qty < w_shares_exec) ? l_qty : w_shares_exec;
 
     localparam LAD_N = SYM_COUNT * 2 * LEVELS;
@@ -241,6 +244,10 @@ module itch_decode #
                                 : (inc_px == tsym_bid_px && tsym_bid_q != 0);
     wire need_rescan = !inc_ok || (inc_is_best && inc_newq == 0);
 
+    wire dec_fast = l_hit &&
+        (w_type == T_EXEC || w_type == T_EXEC_PX ||
+         w_type == T_CANCEL || w_type == T_DELETE);
+
     logic              trig_valid_reg;
     logic [SYM_AW-1:0] trig_sym_reg;
     logic              trig_side_reg;
@@ -287,7 +294,10 @@ module itch_decode #
             dstate_next = D_DECODE;
 
         if (dstate_reg == D_DECODE)
-            dstate_next = D_SEARCH;
+            dstate_next = dec_fast ? D_LOOKUP : D_SEARCH;
+
+        if (dstate_reg == D_LOOKUP)
+            dstate_next = D_APPLY;
 
         if (dstate_reg == D_SEARCH && srch_i == (LVL_AW+1)'(LEVELS))
             dstate_next = D_APPLY;
@@ -445,6 +455,7 @@ module itch_decode #
     logic [QTY_W-1:0]       sa_sub_lqty, sa_sub_take;
     logic                   d_hit;
     logic [31:0]            d_base;
+    logic [LVL_AW:0]        d_slot;
 
     logic [LVL_AW:0]    srch_i;
     logic [LVL_AW:0]    slot_a, slot_b, slot_free;
@@ -562,6 +573,7 @@ module itch_decode #
             d_hit         <= l_hit;
             d_l_qty       <= l_qty;
             d_take        <= l_take;
+            d_slot        <= l_slot;
             d_sym_tracked <= w_sym_tracked;
 
             srch_i    <= '0;
@@ -598,6 +610,15 @@ module itch_decode #
                     d_base   <= 32'((int'(l_sym)*2 + (l_side ? 0 : 1)) * LEVELS);
                 end
             endcase
+        end
+
+        D_LOOKUP: begin
+            slot_a      <= d_slot;
+            slot_a_q    <= lad_q[d_base + 32'(d_slot)];
+            sa_le_lqty  <= (lad_q[d_base + 32'(d_slot)] <= d_l_qty);
+            sa_le_take  <= (lad_q[d_base + 32'(d_slot)] <= d_take);
+            sa_sub_lqty <= lad_q[d_base + 32'(d_slot)] - d_l_qty;
+            sa_sub_take <= lad_q[d_base + 32'(d_slot)] - d_take;
         end
 
         D_SEARCH: begin
@@ -654,6 +675,7 @@ module itch_decode #
                         ord_side [d_ref_h] <= d_side;
                         ord_px   [d_ref_h] <= d_px_a;
                         ord_qty  [d_ref_h] <= d_shares;
+                        ord_slot [d_ref_h] <= (slot_a != (LVL_AW+1)'(LEVELS)) ? slot_a : slot_free;
 
                         if (slot_a != (LVL_AW+1)'(LEVELS)) begin
                             wrA_q_en <= 1'b1;
@@ -719,6 +741,7 @@ module itch_decode #
                         ord_qty  [d_new_ref_h] <= d_shares;
 
                         if (d_px_a == d_px_b) begin
+                            ord_slot[d_new_ref_h] <= slot_a;
                             if (slot_a != (LVL_AW+1)'(LEVELS)) begin
                                 rpl_q = sa_sub_lqty + d_shares;
                                 if (rpl_q == 0) begin
@@ -741,12 +764,15 @@ module itch_decode #
                             end
 
                             if (slot_b != (LVL_AW+1)'(LEVELS)) begin
+                                ord_slot[d_new_ref_h] <= slot_b;
                                 wrB_q_en <= 1'b1; wrB_q <= slot_b_q + d_shares;
                             end else if (ofree) begin
+                                ord_slot[d_new_ref_h] <= slot_a;
                                 wrA_v_en <= 1'b1; wrA_v <= 1'b1;
                                 wrA_px_en<= 1'b1; wrA_px <= d_px_b;
                                 wrA_q_en <= 1'b1; wrA_q  <= d_shares;
                             end else if (slot_free != (LVL_AW+1)'(LEVELS)) begin
+                                ord_slot[d_new_ref_h] <= slot_free;
                                 wrB_idx  <= d_base + 32'(slot_free);
                                 wrB_v_en <= 1'b1; wrB_v <= 1'b1;
                                 wrB_px_en<= 1'b1; wrB_px <= d_px_b;
