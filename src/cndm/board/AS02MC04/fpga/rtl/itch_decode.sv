@@ -46,6 +46,8 @@ module itch_decode #
 
     localparam DATA_W   = s_axis_rx.DATA_W;
     localparam LANES    = DATA_W/8;
+    localparam RES_W    = (LANES > 1) ? $clog2(LANES) : 1;
+    localparam NAV_W    = $clog2(LANES+1);
     localparam SYM_AW   = $clog2(SYM_COUNT);
     localparam ORDER_AW = $clog2(ORDER_COUNT);
     localparam LVL_AW   = $clog2(LEVELS);
@@ -103,7 +105,7 @@ module itch_decode #
     logic [15:0]       skip_reg,     skip_next;
     logic [1:0]        lencnt_reg,   lencnt_next;
     logic [15:0]       msg_len_reg,  msg_len_next;
-    logic [15:0]       msg_rem_reg,  msg_rem_next;
+    logic [BIDX_W:0]   msg_rem_reg,  msg_rem_next;
     logic [BIDX_W-1:0] bidx_reg,     bidx_next;
     logic              frame_done_reg, frame_done_next;
 
@@ -116,7 +118,7 @@ module itch_decode #
 
     logic [7:0]  res_b [0:LANES-1];
     logic [7:0]  res_b_n [0:LANES-1];
-    logic [7:0]  res_cnt, res_cnt_n;
+    logic [RES_W-1:0] res_cnt, res_cnt_n;
 
     wire [7:0]  w_type   = msg_buf[0];
 
@@ -191,7 +193,7 @@ module itch_decode #
     wire [QTY_W-1:0]   scan_ask_q  = tob_ask_q [dbg_sym];
 
     wire decoding = (dstate_reg != D_IDLE);
-    assign s_axis_rx.tready = !decoding && (res_cnt == 8'd0) && (istate_reg != I_WAIT);
+    assign s_axis_rx.tready = !decoding && (res_cnt == '0) && (istate_reg != I_WAIT);
 
     logic              emit_active_reg;
     logic [1:0]        beat_idx_reg;
@@ -314,27 +316,27 @@ module itch_decode #
             end
         end
 
-        if (istate_reg == I_MSG_BODY && (res_cnt != 8'd0 || beat)) begin
-            automatic logic [7:0] navail = (res_cnt != 8'd0) ? res_cnt : 8'(LANES);
-            automatic logic [15:0] rem_big = |msg_rem_reg[15:$clog2(LANES)+1] ? 16'(LANES) : msg_rem_reg;
-            automatic logic [7:0] n_body = (rem_big < 16'(navail)) ? rem_big[7:0] : navail;
-            res_cnt_n = 8'd0;
+        if (istate_reg == I_MSG_BODY && (res_cnt != '0 || beat)) begin
+            automatic logic [NAV_W-1:0] navail = (res_cnt != '0) ? NAV_W'(res_cnt) : NAV_W'(LANES);
+            automatic logic [BIDX_W:0] rem_big = |msg_rem_reg[BIDX_W:$clog2(LANES)+1] ? (BIDX_W+1)'(LANES) : msg_rem_reg;
+            automatic logic [NAV_W-1:0] n_body = (NAV_W'(rem_big) < navail) ? NAV_W'(rem_big) : navail;
+            res_cnt_n = '0;
             for (int l = 0; l < LANES; l = l + 1)
-                if (8'(l) < n_body) begin
+                if (NAV_W'(l) < n_body) begin
                     msg_buf_wr[l]  = 1'b1;
                     msg_buf_widx[l]= BIDX_W'(bidx_reg + BIDX_W'(l));
-                    msg_buf_wb[l]  = (res_cnt != 8'd0) ? res_b[l]
+                    msg_buf_wb[l]  = (res_cnt != '0) ? res_b[l]
                                                        : s_axis_rx.tdata[l*8 +: 8];
                 end
             bidx_next    = BIDX_W'(bidx_reg + BIDX_W'(n_body));
-            msg_rem_next = msg_rem_reg - 16'(n_body);
-            if (msg_rem_reg <= 16'(n_body)) begin
+            msg_rem_next = msg_rem_reg - (BIDX_W+1)'(n_body);
+            if (msg_rem_reg <= (BIDX_W+1)'(n_body)) begin
                 istate_next    = I_WAIT;
                 msg_ready_next = 1'b1;
-                if (!(beat && s_axis_rx.tlast) && res_cnt == 8'd0) begin
-                    res_cnt_n = navail - n_body;
+                if (!(beat && s_axis_rx.tlast) && res_cnt == '0) begin
+                    res_cnt_n = RES_W'(navail - n_body);
                     for (int k = 0; k < LANES; k = k + 1)
-                        res_b_n[k] = ((8'(k) + n_body) < navail)
+                        res_b_n[k] = ((NAV_W'(k) + n_body) < navail)
                                    ? s_axis_rx.tdata[((k + int'(n_body)) % LANES)*8 +: 8]
                                    : 8'd0;
                 end
@@ -345,12 +347,12 @@ module itch_decode #
                 if (istate_next != I_WAIT)
                     istate_next = I_IDLE;
             end
-        end else if (istate_reg != I_WAIT && (res_cnt != 8'd0 || beat)) begin
+        end else if (istate_reg != I_WAIT && (res_cnt != '0 || beat)) begin
             automatic logic stop = 1'b0;
-            automatic logic [7:0] navail = (res_cnt != 8'd0) ? res_cnt : 8'(LANES);
-            res_cnt_n = 8'd0;
+            automatic logic [NAV_W-1:0] navail = (res_cnt != '0) ? NAV_W'(res_cnt) : NAV_W'(LANES);
+            res_cnt_n = '0;
             for (int l = 0; l < LANES; l = l + 1) begin
-                automatic logic [7:0] cb = (res_cnt != 8'd0) ? res_b[l]
+                automatic logic [7:0] cb = (res_cnt != '0) ? res_b[l]
                                                              : s_axis_rx.tdata[l*8 +: 8];
                 if (!stop && l < navail) begin
                 case (istate_next)
@@ -377,10 +379,10 @@ module itch_decode #
                     automatic logic [15:0] mlen = {msg_len_next[7:0], cb};
                     msg_len_next = mlen;
                     if (lencnt_next == 2'd1) begin
-                        if (mlen == 16'd0) begin
+                        if (mlen == 16'd0 || mlen > 16'(MSG_BUF_N)) begin
                             istate_next = I_DRAIN;
                         end else begin
-                            msg_rem_next = mlen;
+                            msg_rem_next = (BIDX_W+1)'(mlen);
                             bidx_next    = '0;
                             istate_next  = I_MSG_BODY;
                         end
@@ -393,14 +395,14 @@ module itch_decode #
                     msg_buf_widx[l]= bidx_next;
                     msg_buf_wb[l]  = cb;
                     bidx_next = bidx_next + 1;
-                    if (msg_rem_next == 16'd1) begin
+                    if (msg_rem_next == (BIDX_W+1)'(1)) begin
                         istate_next    = I_WAIT;
                         msg_ready_next = 1'b1;
                         stop = 1'b1;
-                        if (!(beat && s_axis_rx.tlast) && res_cnt == 8'd0) begin
-                            res_cnt_n = (navail - 8'(l) - 8'd1);
+                        if (!(beat && s_axis_rx.tlast) && res_cnt == '0) begin
+                            res_cnt_n = RES_W'(navail - NAV_W'(l) - NAV_W'(1));
                             for (int k = 0; k < LANES; k = k + 1)
-                                res_b_n[k] = ((8'(k) + 8'(l) + 8'd1) < navail)
+                                res_b_n[k] = ((NAV_W'(k) + NAV_W'(l) + NAV_W'(1)) < navail)
                                            ? s_axis_rx.tdata[((l+1+k) % LANES)*8 +: 8]
                                            : 8'd0;
                         end
@@ -423,7 +425,7 @@ module itch_decode #
         end
 
         if (istate_next == I_IDLE)
-            res_cnt_n = 8'd0;
+            res_cnt_n = '0;
 
         if (istate_next == I_IDLE)
             frame_done_next = 1'b0;
@@ -439,6 +441,8 @@ module itch_decode #
     logic                   d_side;
     logic [PRICE_W-1:0]     d_px_a, d_px_b;
     logic [QTY_W-1:0]       d_shares, d_take, d_l_qty;
+    logic                   sa_le_lqty, sa_le_take;
+    logic [QTY_W-1:0]       sa_sub_lqty, sa_sub_take;
     logic                   d_hit;
     logic [31:0]            d_base;
 
@@ -539,7 +543,7 @@ module itch_decode #
                 beat_idx_reg <= beat_idx_reg + 1;
         end
 
-        if (!decoding && (res_cnt != 8'd0 || beat))
+        if (!decoding && (res_cnt != '0 || beat))
             for (int l = 0; l < LANES; l = l + 1)
                 if (msg_buf_wr[l])
                     msg_buf[msg_buf_widx[l]] <= msg_buf_wb[l];
@@ -608,6 +612,10 @@ module itch_decode #
                     if (sr_px == d_px_a) begin
                         slot_a   <= sr_i;
                         slot_a_q <= sr_q;
+                        sa_le_lqty  <= (sr_q <= d_l_qty);
+                        sa_le_take  <= (sr_q <= d_take);
+                        sa_sub_lqty <= sr_q - d_l_qty;
+                        sa_sub_take <= sr_q - d_take;
                     end
                     if (sr_px == d_px_b) begin
                         slot_b   <= sr_i;
@@ -672,12 +680,12 @@ module itch_decode #
                         if (d_l_qty - d_take == 0)
                             ord_valid[d_ref_h] <= 1'b0;
                         if (slot_a != (LVL_AW+1)'(LEVELS)) begin
-                            if (slot_a_q <= d_take) begin
+                            if (sa_le_take) begin
                                 wrA_v_en <= 1'b1; wrA_v <= 1'b0;
                                 inc_ok   <= 1'b1; inc_newq <= '0;
                             end else begin
-                                wrA_q_en <= 1'b1; wrA_q <= slot_a_q - d_take;
-                                inc_ok   <= 1'b1; inc_newq <= slot_a_q - d_take;
+                                wrA_q_en <= 1'b1; wrA_q <= sa_sub_take;
+                                inc_ok   <= 1'b1; inc_newq <= sa_sub_take;
                             end
                         end
                         upd_valid_reg <= 1'b1;
@@ -688,12 +696,12 @@ module itch_decode #
                     if (d_hit) begin
                         ord_valid[d_ref_h] <= 1'b0;
                         if (slot_a != (LVL_AW+1)'(LEVELS)) begin
-                            if (slot_a_q <= d_l_qty) begin
+                            if (sa_le_lqty) begin
                                 wrA_v_en <= 1'b1; wrA_v <= 1'b0;
                                 inc_ok   <= 1'b1; inc_newq <= '0;
                             end else begin
-                                wrA_q_en <= 1'b1; wrA_q <= slot_a_q - d_l_qty;
-                                inc_ok   <= 1'b1; inc_newq <= slot_a_q - d_l_qty;
+                                wrA_q_en <= 1'b1; wrA_q <= sa_sub_lqty;
+                                inc_ok   <= 1'b1; inc_newq <= sa_sub_lqty;
                             end
                         end
                         upd_valid_reg <= 1'b1;
@@ -712,7 +720,7 @@ module itch_decode #
 
                         if (d_px_a == d_px_b) begin
                             if (slot_a != (LVL_AW+1)'(LEVELS)) begin
-                                rpl_q = slot_a_q - d_l_qty + d_shares;
+                                rpl_q = sa_sub_lqty + d_shares;
                                 if (rpl_q == 0) begin
                                     wrA_v_en <= 1'b1; wrA_v <= 1'b0;
                                     inc_ok   <= 1'b1; inc_newq <= '0;
@@ -724,7 +732,7 @@ module itch_decode #
                         end else begin
                             ofree = 1'b0;
                             if (slot_a != (LVL_AW+1)'(LEVELS)) begin
-                                if (slot_a_q <= d_l_qty) begin
+                                if (sa_le_lqty) begin
                                     wrA_v_en <= 1'b1; wrA_v <= 1'b0;
                                     ofree = 1'b1;
                                 end else begin
@@ -832,7 +840,7 @@ module itch_decode #
             skip_reg       <= '0;
             lencnt_reg     <= 2'd2;
             msg_rem_reg    <= '0;
-            res_cnt        <= 8'd0;
+            res_cnt        <= '0;
             bidx_reg       <= '0;
             frame_done_reg <= 1'b0;
             trig_valid_reg  <= 1'b0;

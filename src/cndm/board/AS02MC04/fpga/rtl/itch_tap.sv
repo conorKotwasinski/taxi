@@ -12,7 +12,8 @@ module itch_tap #
     parameter ORDER_REF_W    = 64,
     parameter TS_W           = 48,
     parameter HDR_SKIP_BYTES = 14,
-    parameter FIFO_DEPTH     = 8192
+    parameter FIFO_DEPTH     = 8192,
+    parameter DEC_DATA_W     = 16
 )
 (
     input  wire logic  clk,
@@ -83,7 +84,7 @@ module itch_tap #
         .m_status_overflow(), .m_status_bad_frame(), .m_status_good_frame()
     );
 
-    taxi_axis_if #(.DATA_W(8), .USER_EN(1), .USER_W(USER_W)) axis_dec();
+    taxi_axis_if #(.DATA_W(DEC_DATA_W), .USER_EN(1), .USER_W(USER_W)) axis_dec();
 
     taxi_axis_adapter dn (
         .clk(clk), .rst(rst),
