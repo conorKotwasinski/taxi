@@ -313,6 +313,45 @@ async def run_test_order_collision(dut):
     assert got == exp, f"collision: dut={got} golden={exp}"
 
 
+@cocotb.test()
+async def run_test_replace_overflow_slot(dut):
+    tb = TB(dut)
+    await tb.reset()
+    mk = itch._mk
+    framed = itch._framed
+
+    levels = int(dut.LEVELS.value)
+
+    base = 1500000
+    fill = [base + i * 100 for i in range(levels - 1)]
+    best = base + (levels - 1) * 100
+    away = base - 100000
+
+    msgs = [
+        mk('A', ref=101, side='B', shares=500, stock='AAPL', price=best),
+        mk('A', ref=100, side='B', shares=100, stock='AAPL', price=best),
+        mk('D', ref=100),
+    ]
+    msgs += [mk('A', ref=200 + i, side='B', shares=10, stock='AAPL', price=p)
+             for i, p in enumerate(fill)]
+    msgs += [
+        mk('A', ref=300, side='B', shares=50, stock='AAPL', price=fill[0]),
+        mk('U', ref=300, new_ref=100, shares=500, price=away),
+        mk('D', ref=100),
+        mk('D', ref=999999),
+    ]
+
+    stream = framed(*msgs)
+    book = itch.build_book(stream, symbols=SYMBOLS)
+
+    await tb.send_stream(stream, ts=0x77)
+
+    got = await tb.read_tob(SYM_ID['AAPL'])
+    exp = book.top_of_book('AAPL')
+    tb.log.info("replace-overflow slot: levels=%d dut=%r golden=%r", levels, got, exp)
+    assert got == exp, f"replace-overflow slot: dut={got} golden={exp}"
+
+
 @cocotb.test(skip=not os.environ.get('ITCH_REPLAY_BIN'))
 async def run_test_pcap_replay(dut):
     tb = TB(dut)

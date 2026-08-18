@@ -739,6 +739,7 @@ module itch_decode #
                         ord_side [d_new_ref_h] <= d_side;
                         ord_px   [d_new_ref_h] <= d_px_b;
                         ord_qty  [d_new_ref_h] <= d_shares;
+                        ord_slot [d_new_ref_h] <= (LVL_AW+1)'(LEVELS);
 
                         if (d_px_a == d_px_b) begin
                             ord_slot[d_new_ref_h] <= slot_a;
