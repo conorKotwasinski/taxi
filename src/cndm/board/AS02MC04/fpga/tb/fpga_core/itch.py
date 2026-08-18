@@ -190,6 +190,104 @@ class ItchBook:
         ask_px = min(a) if a else 0
         return (bid_px, b.get(bid_px, 0), ask_px, a.get(ask_px, 0))
 
+class BoundedItchBook:
+
+    def __init__(self, symbols, levels=16, order_count=1024):
+        self.symbols = [s if isinstance(s, bytes) else s.encode() for s in symbols]
+        self.levels = levels
+        self.order_count = order_count
+        self.lad = {}
+        for s in self.symbols:
+            for side in ('B', 'S'):
+                self.lad[(s, side)] = [[False, 0, 0] for _ in range(levels)]
+        self.omap = [None] * order_count
+        self.overflow = False
+
+    def _tracked(self, stock):
+        return stock in self.symbols
+
+    def _oidx(self, ref):
+        return ref & (self.order_count - 1)
+
+    def _get(self, ref):
+        o = self.omap[self._oidx(ref)]
+        return o if (o is not None and o['ref'] == ref) else None
+
+    def _place(self, stock, side, price, qty):
+        slots = self.lad[(stock, side)]
+        for s in slots:
+            if s[0] and s[1] == price:
+                s[2] += qty
+                return qty
+        for s in slots:
+            if not s[0]:
+                s[0], s[1], s[2] = True, price, qty
+                return qty
+        self.overflow = True
+        return 0
+
+    def _take(self, stock, side, price, qty):
+        if qty <= 0:
+            return
+        for s in self.lad[(stock, side)]:
+            if s[0] and s[1] == price:
+                s[2] -= qty
+                if s[2] <= 0:
+                    s[0], s[1], s[2] = False, 0, 0
+                return
+
+    def apply(self, m):
+        if m is None:
+            return
+
+        if m.type in (b'A', b'F'):
+            if not self._tracked(m.stock):
+                return
+            placed = self._place(m.stock, m.side, m.price, m.shares)
+            self.omap[self._oidx(m.order_ref)] = {
+                'ref': m.order_ref, 'stock': m.stock, 'side': m.side,
+                'price': m.price, 'qty': m.shares, 'contrib': placed}
+
+        elif m.type in (b'E', b'C', b'X'):
+            o = self._get(m.order_ref)
+            if o is None:
+                return
+            take = min(o['qty'], m.shares)
+            o['qty'] -= take
+            hit = min(take, o['contrib'])
+            self._take(o['stock'], o['side'], o['price'], hit)
+            o['contrib'] -= hit
+            if o['qty'] == 0:
+                self.omap[self._oidx(m.order_ref)] = None
+
+        elif m.type == b'D':
+            o = self._get(m.order_ref)
+            if o is None:
+                return
+            self._take(o['stock'], o['side'], o['price'], o['contrib'])
+            self.omap[self._oidx(m.order_ref)] = None
+
+        elif m.type == b'U':
+            o = self._get(m.order_ref)
+            if o is None:
+                return
+            self._take(o['stock'], o['side'], o['price'], o['contrib'])
+            placed = self._place(o['stock'], o['side'], m.price, m.shares)
+            self.omap[self._oidx(m.order_ref)] = None
+            self.omap[self._oidx(m.new_order_ref)] = {
+                'ref': m.new_order_ref, 'stock': o['stock'], 'side': o['side'],
+                'price': m.price, 'qty': m.shares, 'contrib': placed}
+
+    def top_of_book(self, stock):
+        stock = stock if isinstance(stock, bytes) else stock.encode()
+        bids = [s for s in self.lad[(stock, 'B')] if s[0]]
+        asks = [s for s in self.lad[(stock, 'S')] if s[0]]
+        bid_px = max((s[1] for s in bids), default=0)
+        ask_px = min((s[1] for s in asks), default=0)
+        bid_q = next((s[2] for s in bids if s[1] == bid_px), 0)
+        ask_q = next((s[2] for s in asks if s[1] == ask_px), 0)
+        return (bid_px, bid_q, ask_px, ask_q)
+
 def iter_binaryfile(data):
     o = 0
     n = len(data)

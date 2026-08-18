@@ -66,7 +66,7 @@ class TB:
         await self.source.send(frame)
 
         await self.source.wait()
-        for _ in range(40):
+        for _ in range(3 * int(self.dut.LEVELS.value) + 40):
             await RisingEdge(self.dut.clk)
 
     async def read_tob(self, sym_id):
@@ -371,7 +371,10 @@ async def run_test_pcap_replay(dut):
         data = f.read()
     bodies = list(itch.iter_binaryfile(data))
 
-    book = itch.ItchBook(symbols=SYMBOLS)
+    levels = int(dut.LEVELS.value)
+    order_count = int(dut.ORDER_COUNT.value)
+    book = itch.BoundedItchBook(SYMBOLS, levels=levels, order_count=order_count)
+    tb.log.info("replay model bounds: levels=%d order_count=%d", levels, order_count)
     ts = 0x1000
     applied = 0
     diverged = 0
@@ -400,9 +403,9 @@ async def run_test_pcap_replay(dut):
         pct = lambda p: s[min(len(s) - 1, int(len(s) * p / 100))]
         tb.log.info("replay latency (cycles): n=%d min=%d p50=%d p99=%d max=%d",
                     len(s), s[0], pct(50), pct(99), s[-1])
-    tb.log.info("replay: %d messages applied, %d divergences, ladder_overflow=%d",
-                applied, diverged, ovf)
-    assert applied > 0
+    tb.log.info("replay: %d messages applied, %d divergences, "
+                "dut_ladder_overflow=%d model_overflow=%s",
+                applied, diverged, ovf, book.overflow)
     assert applied > 0, "no messages replayed from pcap stream"
 
 
