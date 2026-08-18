@@ -286,6 +286,33 @@ async def run_test_straddle(dut):
     assert got == exp, f"straddle: dut={got} golden={exp}"
 
 
+@cocotb.test()
+async def run_test_order_collision(dut):
+    tb = TB(dut)
+    await tb.reset()
+    mk = itch._mk
+    framed = itch._framed
+
+    order_count = int(dut.ORDER_COUNT.value)
+
+    stream = framed(
+        mk('A', ref=1, side='B', shares=100, stock='AAPL', price=1500000),
+        mk('A', ref=2, side='S', shares=200, stock='AAPL', price=1500100),
+        mk('D', ref=1 + order_count),
+        mk('E', ref=2 + order_count, shares=50),
+        mk('A', ref=3, side='B', shares=400, stock='AAPL', price=1500050),
+        mk('D', ref=3 + order_count),
+    )
+    book = itch.build_book(stream, symbols=SYMBOLS)
+
+    await tb.send_stream(stream, ts=0x66)
+
+    got = await tb.read_tob(SYM_ID['AAPL'])
+    exp = book.top_of_book('AAPL')
+    tb.log.info("collision: dut=%r golden=%r order_count=%d", got, exp, order_count)
+    assert got == exp, f"collision: dut={got} golden={exp}"
+
+
 @cocotb.test(skip=not os.environ.get('ITCH_REPLAY_BIN'))
 async def run_test_pcap_replay(dut):
     tb = TB(dut)
