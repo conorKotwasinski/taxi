@@ -9,11 +9,12 @@ import time
 ETH_HDR = 14
 
 
-def frames(path, mtu, limit):
+def frames(path, mtu, limit, per_frame=0):
     data = open(path, 'rb').read()
     off = 0
     n = len(data)
     cur = bytearray()
+    held = 0
     cap = mtu - ETH_HDR
     sent = 0
     while off + 2 <= n:
@@ -24,9 +25,15 @@ def frames(path, mtu, limit):
         if len(cur) + len(rec) > cap:
             yield bytes(cur)
             cur = bytearray()
+            held = 0
         cur += rec
+        held += 1
         off += 2 + mlen
         sent += 1
+        if per_frame and held >= per_frame:
+            yield bytes(cur)
+            cur = bytearray()
+            held = 0
         if limit and sent >= limit:
             break
     if cur:
@@ -40,6 +47,7 @@ def main():
     ap.add_argument('-n', '--limit', type=int, default=0)
     ap.add_argument('--mtu', type=int, default=1500)
     ap.add_argument('--gap-us', type=float, default=200.0)
+    ap.add_argument('--msgs-per-frame', type=int, default=0)
     ap.add_argument('--dst', default='ff:ff:ff:ff:ff:ff')
     ap.add_argument('--ethertype', type=lambda x: int(x, 0), default=0x88b5)
     a = ap.parse_args()
@@ -54,7 +62,7 @@ def main():
     nf = 0
     nb = 0
     t0 = time.perf_counter()
-    for payload in frames(a.binfile, a.mtu, a.limit):
+    for payload in frames(a.binfile, a.mtu, a.limit, a.msgs_per_frame):
         pkt = hdr + payload
         if len(pkt) < 60:
             pkt += b'\x00' * (60 - len(pkt))
