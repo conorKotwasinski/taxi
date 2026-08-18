@@ -326,6 +326,8 @@ async def run_test_pcap_replay(dut):
     book = itch.ItchBook(symbols=SYMBOLS)
     ts = 0x1000
     applied = 0
+    diverged = 0
+    lats = []
     for body in bodies:
         m = itch.parse_message(body)
         if m is None:
@@ -334,18 +336,25 @@ async def run_test_pcap_replay(dut):
         ts += 1
         book.apply(m)
         applied += 1
+        lats.append(int(dut.dbg_lat_last.value))
+        for name in SYMBOLS:
+            got = await tb.read_tob(SYM_ID[name])
+            exp = book.top_of_book(name)
+            if got != exp:
+                diverged += 1
+                assert got == exp, (
+                    f"msg {applied} ({body[0:1]!r}) {name}: dut={got} golden={exp}")
 
     ovf = int(dut.ladder_overflow.value) if hasattr(dut, 'ladder_overflow') else 0
-    matches = 0
-    for name in SYMBOLS:
-        got = await tb.read_tob(SYM_ID[name])
-        exp = book.top_of_book(name)
-        if got == exp:
-            matches += 1
-        tb.log.info("replay %s: dut=%r golden=%r %s",
-                    name, got, exp, "OK" if got == exp else "DIVERGED")
-    tb.log.info("replay: %d messages applied, %d/%d tracked symbols match, ladder_overflow=%d",
-                applied, matches, len(SYMBOLS), ovf)
+    lats = [c for c in lats if c > 0]
+    if lats:
+        s = sorted(lats)
+        pct = lambda p: s[min(len(s) - 1, int(len(s) * p / 100))]
+        tb.log.info("replay latency (cycles): n=%d min=%d p50=%d p99=%d max=%d",
+                    len(s), s[0], pct(50), pct(99), s[-1])
+    tb.log.info("replay: %d messages applied, %d divergences, ladder_overflow=%d",
+                applied, diverged, ovf)
+    assert applied > 0
     assert applied > 0, "no messages replayed from pcap stream"
 
 
