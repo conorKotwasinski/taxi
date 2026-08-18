@@ -81,9 +81,10 @@ module itch_decode #
         I_DRAIN
     } istate_t;
 
-    typedef enum logic [2:0] {
+    typedef enum logic [3:0] {
         D_IDLE,
         D_DECODE,
+        D_DISPATCH,
         D_LOOKUP,
         D_SEARCH,
         D_APPLY,
@@ -94,6 +95,7 @@ module itch_decode #
 
     istate_t istate_reg = I_IDLE, istate_next;
     dstate_t dstate_reg = D_IDLE, dstate_next;
+    logic    dec_fast;
     logic    msg_ready_reg, msg_ready_next;
 
     logic [TS_W-1:0]   ts_reg,       ts_next;
@@ -102,6 +104,7 @@ module itch_decode #
     logic [15:0] t0_cyc;
     logic [15:0] lat_last, lat_min, lat_max;
     logic [15:0] tlat_last, tlat_min, tlat_max;   // ingress -> trigger (tick-to-trade detect)
+    logic [15:0] tlat_d;
     logic              bad_reg,      bad_next;
     logic [15:0]       skip_reg,     skip_next;
     logic [1:0]        lencnt_reg,   lencnt_next;
@@ -172,7 +175,6 @@ module itch_decode #
     wire                 l_side = ord_side[ref_h];
     wire [PRICE_W-1:0]   l_px   = ord_px[ref_h];
     wire [QTY_W-1:0]     l_qty  = ord_qty[ref_h];
-    wire [LVL_AW:0]      l_slot = ord_slot[ref_h];
     wire [QTY_W-1:0]     l_take = (l_qty < w_shares_exec) ? l_qty : w_shares_exec;
 
     localparam LAD_N = SYM_COUNT * 2 * LEVELS;
@@ -244,10 +246,6 @@ module itch_decode #
                                 : (inc_px == tsym_bid_px && tsym_bid_q != 0);
     wire need_rescan = !inc_ok || (inc_is_best && inc_newq == 0);
 
-    wire dec_fast = l_hit &&
-        (w_type == T_EXEC || w_type == T_EXEC_PX ||
-         w_type == T_CANCEL || w_type == T_DELETE);
-
     logic              trig_valid_reg;
     logic [SYM_AW-1:0] trig_sym_reg;
     logic              trig_side_reg;
@@ -294,6 +292,9 @@ module itch_decode #
             dstate_next = D_DECODE;
 
         if (dstate_reg == D_DECODE)
+            dstate_next = D_DISPATCH;
+
+        if (dstate_reg == D_DISPATCH)
             dstate_next = dec_fast ? D_LOOKUP : D_SEARCH;
 
         if (dstate_reg == D_LOOKUP)
@@ -457,6 +458,10 @@ module itch_decode #
     logic [31:0]            d_base;
     logic [LVL_AW:0]        d_slot;
 
+    assign dec_fast = d_hit &&
+        (d_type == T_EXEC || d_type == T_EXEC_PX ||
+         d_type == T_CANCEL || d_type == T_DELETE);
+
     logic [LVL_AW:0]    srch_i;
     logic [LVL_AW:0]    slot_a, slot_b, slot_free;
     logic [QTY_W-1:0]   slot_a_q, slot_b_q;
@@ -509,6 +514,14 @@ module itch_decode #
 
         trig_valid_reg  <= 1'b0;
 
+        tlat_d <= cyc_cnt - t0_cyc;
+
+        if (trig_valid_reg) begin
+            tlat_last <= tlat_d;
+            if (tlat_d < tlat_min) tlat_min <= tlat_d;
+            if (tlat_d > tlat_max) tlat_max <= tlat_d;
+        end
+
         if (upd_pending_reg) begin
             trig_sym_reg <= upd_sym_reg;
             if (tsym_bid_q > tsym_ask_q) begin
@@ -517,12 +530,6 @@ module itch_decode #
             end else begin
                 trig_side_reg  <= 1'b1;
                 trig_valid_reg <= (tsym_ask_q - tsym_bid_q) > cfg_imbalance_thresh;
-            end
-            if (((tsym_bid_q > tsym_ask_q) ? (tsym_bid_q - tsym_ask_q)
-                                           : (tsym_ask_q - tsym_bid_q)) > cfg_imbalance_thresh) begin
-                tlat_last <= cyc_cnt - t0_cyc;
-                if ((cyc_cnt - t0_cyc) < tlat_min) tlat_min <= cyc_cnt - t0_cyc;
-                if ((cyc_cnt - t0_cyc) > tlat_max) tlat_max <= cyc_cnt - t0_cyc;
             end
         end
         upd_pending_reg <= 1'b0;
@@ -573,7 +580,6 @@ module itch_decode #
             d_hit         <= l_hit;
             d_l_qty       <= l_qty;
             d_take        <= l_take;
-            d_slot        <= l_slot;
             d_sym_tracked <= w_sym_tracked;
 
             srch_i    <= '0;
@@ -610,6 +616,10 @@ module itch_decode #
                     d_base   <= 32'((int'(l_sym)*2 + (l_side ? 0 : 1)) * LEVELS);
                 end
             endcase
+        end
+
+        D_DISPATCH: begin
+            d_slot <= ord_slot[d_ref_h];
         end
 
         D_LOOKUP: begin
@@ -874,7 +884,6 @@ module itch_decode #
             upd_pending_reg <= 1'b0;
             upd_valid_reg   <= 1'b0;
             srch_i          <= '0;
-            scan_i          <= '0;
             emit_active_reg <= 1'b0;
             beat_idx_reg    <= 2'd0;
             cyc_cnt  <= '0;

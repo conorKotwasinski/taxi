@@ -195,6 +195,15 @@ async def run_test_trigger(dut):
     assert fired_aapl_bid, "expected AAPL bid-heavy trigger"
     assert not fired_msft, "MSFT is balanced; should not trigger"
 
+    tlast = int(dut.dbg_tlat_last.value)
+    tmin = int(dut.dbg_tlat_min.value)
+    tmax = int(dut.dbg_tlat_max.value)
+    tb.log.info("tick-to-trigger latency (cycles): last=%d min=%d max=%d",
+                tlast, tmin, tmax)
+    assert tmax > 0, "no tick-to-trigger latency measured"
+    assert tmin <= tlast <= tmax, f"tlat not ordered: {tmin} {tlast} {tmax}"
+    assert tmax < 4096, "tick-to-trigger latency implausibly large"
+
 @cocotb.test()
 async def run_test_delta_emit(dut):
 
